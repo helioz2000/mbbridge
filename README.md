@@ -2,6 +2,6 @@
 Modbus to MQTT bridge
 
 #Dependencies:
-libmodbus-dev
-libconfig++-dev
-libmosquitto-dev
+* libmodbus-dev
+* libconfig++-dev
+* libmosquitto-dev
