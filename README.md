@@ -1,7 +1,9 @@
 # mbbridge
 Modbus to MQTT bridge
 
-#Dependencies:
-* libmodbus-dev
-* libconfig++-dev
-* libmosquitto-dev
+Target: Raspberry Pi
+
+###Required Libraries:
+* modbus (libmodbus-dev)
+* config (libconfig++-dev)
+* mosquitto (libmosquitto-dev)
