@@ -5,15 +5,17 @@ BIN = mbbridge
 BINDIR = /usr/sbin/
 DESTDIR = /usr
 PREFIX = /local
+INCDIR1 = $(DESTDIR)/include/modbuspp
+INCDIR2 = $(DESTDIR)/include/modbus
 
 CC=gcc
 CXX=g++
 CFLAGS = -Wall -Wshadow -Wundef -Wmaybe-uninitialized
-CFLAGS += -O3 -g3 -I./
+CFLAGS += -O3 -g3 -I$(INCDIR1) -I$(INCDIR2)
 
 # directory for local libs
 LDFLAGS = -L$(DESTDIR)$(PREFIX)/lib
-LIBS += -lstdc++ -lm -lmosquitto -lconfig++ -lmodbus
+LIBS += -lstdc++ -lm -lmosquitto -lconfig++ -lmodbus -lmodbuspp
 
 VPATH =
 

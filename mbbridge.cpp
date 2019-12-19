@@ -25,6 +25,7 @@
 
 #include <libconfig.h++>
 #include <mosquitto.h>
+#include <modbuspp.h>
 
 #include "mqtt.h"
 #include "datatag.h"
