@@ -413,7 +413,7 @@ bool init_modbus()
 	// Attempt to open serial device
 	mb = new Master(Rtu, rtu_port.c_str(), port_config.c_str());
 	if (!mb->open()) {
-		log(LOG_ERR, "Failed to open port %s at %s", rtu_port.c_str(), port_config.c_str());
+		log(LOG_ERR, "Failed to open port %s at %s [%s]", rtu_port.c_str(), port_config.c_str(), mb->lastError().c_str());
 		return false;
 	}
 	
