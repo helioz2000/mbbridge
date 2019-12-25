@@ -10,7 +10,7 @@ INCDIR2 = $(DESTDIR)/include/modbus
 
 CC=gcc
 CXX=g++
-CFLAGS = -Wall -Wshadow -Wundef -Wmaybe-uninitialized
+CFLAGS = -Wall -Wshadow -Wundef -Wmaybe-uninitialized -Wno-unknown-pragmas
 CFLAGS += -O3 -g3 -I$(INCDIR1) -I$(INCDIR2)
 
 # directory for local libs

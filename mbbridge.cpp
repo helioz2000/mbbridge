@@ -32,6 +32,7 @@
 
 using namespace std;
 using namespace libconfig;
+using namespace Modbus;
 
 #define CFG_FILENAME_EXT ".cfg"
 #define CFG_DEFAULT_FILEPATH "/etc/"
@@ -62,62 +63,55 @@ useconds_t mainloopinterval = 250;   // milli seconds
 //extern void cpuTempUpdate(int x, Tag* t);
 //extern void roomTempUpdate(int x, Tag* t);
 
-// Proto types
+#pragma mark Proto types
 void subscribe_tags(void);
 void mqtt_connection_status(bool status);
 void mqtt_topic_update(const char *topic, const char *value);
-
+void setMainLoopInterval(int newValue);
 
 TagStore ts;
 MQTT mqtt;
-Config cfg;         // config file name
+Config cfg;		// config file name
+Master *mb = NULL;		//Modbus master
+
+/**
+ * log to console and syslog for daemon
+ */
+template<typename... Args> void log(int priority, const char * f, Args... args) {
+	if (runningAsDaemon) {
+		syslog(priority, f, args...);
+	} else {
+		fprintf(stderr, f, args...);
+		fprintf(stderr, "\n");
+	}
+}
 
 /** Handle OS signals
  */
 void sigHandler(int signum)
 {
-    char signame[10];
-    switch (signum) {
-        case SIGTERM:
-            strcpy(signame, "SIGTERM");
-            break;
-        case SIGHUP:
-            strcpy(signame, "SIGHUP");
-            break;
-        case SIGINT:
-            strcpy(signame, "SIGINT");
-            break;
+	char signame[10];
+	switch (signum) {
+		case SIGTERM:
+			strcpy(signame, "SIGTERM");
+			break;
+		case SIGHUP:
+			strcpy(signame, "SIGHUP");
+			break;
+		case SIGINT:
+			strcpy(signame, "SIGINT");
+			break;
 
-        default:
-            break;
-    }
+		default:
+			break;
+	}
 
-    printf("Received %s\n", signame);
-    syslog(LOG_INFO, "Received %s", signame);
-    exitSignal = true;
+	printf("Received %s\n", signame);
+	syslog(LOG_INFO, "Received %s", signame);
+	exitSignal = true;
 }
 
-/** set main loop interval to a valid setting
- * @param newValue the new main loop interval in ms
- */
-void setMainLoopInterval(int newValue)
-{
-    int val = newValue;
-    if (newValue < MAIN_LOOP_INTERVAL_MINIMUM) {
-        val = MAIN_LOOP_INTERVAL_MINIMUM;
-    }
-    if (newValue > MAIN_LOOP_INTERVAL_MAXIMUM) {
-        val = MAIN_LOOP_INTERVAL_MAXIMUM;
-    }
-    mainloopinterval = val;
-
-    if (runningAsDaemon) {
-        syslog(LOG_INFO, "Main Loop interval is %dms", mainloopinterval);
-    } else {
-        fprintf(stderr, "Main Loop interval is %dms\n", mainloopinterval);
-    }
-}
-
+#pragma mark Read Config File
 
 /** Read configuration file.
  * @param
@@ -192,6 +186,26 @@ bool readConfig (void)
 	return true;
 }
 
+
+bool cfg_get_int(const char *path, int &value) {
+	if (!cfg.lookupValue(path, value)) {
+		std::cerr << "Error in config file <" << path << ">" << std::endl;
+		return false;
+	}
+	return true;
+}
+
+//bool cfg_get_str(const char *path, const char* &value) {
+bool cfg_get_str(const std::string &path, std::string &value) {
+	if (!cfg.lookupValue(path, value)) {
+		std::cerr << "Error in config file <" << path << ">" << std::endl;
+		return false;
+	}
+	return true;
+}
+
+#pragma mark Processing
+
 /**
  * Process variables
  * Local variables are processed at a fixed time interval
@@ -234,12 +248,12 @@ bool var_process(void) {
  * @return true if at least one variable was processed
  */
 bool process() {
-    return var_process();
+	return var_process();
 }
 
 bool init_values(void)
 {
-    char info1[80], info2[80], info3[80], info4[80];
+	//char info1[80], info2[80], info3[80], info4[80];
 
 /*
     // get hardware info
@@ -257,31 +271,17 @@ bool init_values(void)
     return true;
 }
 
-bool cfg_get_int(const char *path, int &value) {
-    if (!cfg.lookupValue(path, value)) {
-	std::cerr << "Error in config file <" << path << ">" << std::endl;
-	return false;
-    }
-    return true;
-}
-
-
-bool cfg_get_str(const char *path, const char*&value) {
-if (!cfg.lookupValue(path, value)) {
-         std::cerr << "Error in config file <" << path << ">" << std::endl;
-         return false;
-     }
-     return true;
-}
+#pragma mark MQTT
 
 /** Initialise the tag database (tagstore)
  * @return false on failure
  */
 bool init_tags(void)
 {
-    Tag* tp = NULL;
-    std::string path;
 /*
+	Tag* tp = NULL;
+	std::string path;
+
     // CPU temperature
     try {
         tp = ts.addTag(cfg.lookup("cputemp.topic"));
@@ -356,10 +356,7 @@ void mqtt_connection_status(bool status) {
     //printf("%s - %d\n", __func__, status);
     // subscribe tags when connection is online
     if (status) {
-        syslog(LOG_INFO, "Connected to MQTT broker [%s]", mqtt.broker());
-	if (!runningAsDaemon) {
-	    printf("%s: Connected to mqtt broker [%s]\n", __func__, mqtt.broker());
-        }
+        log(LOG_INFO, "Connected to MQTT broker [%s]", mqtt.broker());
 	mqtt_connection_in_progress = false;
         subscribe_tags();
     } else {
@@ -367,12 +364,10 @@ void mqtt_connection_status(bool status) {
             mqtt.disconnect();
             // Note: the timeout is determined by OS network stack
             unsigned long timeout = time(NULL) - mqtt_connect_time;
-            syslog(LOG_INFO, "mqtt connection timeout after %lds", timeout);
-            fprintf(stderr, "%s: mqtt connection timeout after %lds\n", __func__, timeout);
+            log(LOG_INFO, "mqtt connection timeout after %lds", timeout);
             mqtt_connection_in_progress = false;
         } else {
-            syslog(LOG_WARNING, "Disconnected from MQTT broker [%s]", mqtt.broker());
-            fprintf(stderr, "%s: Disconnected from MQTT broker [%s]\n", __func__, mqtt.broker());
+            log(LOG_WARNING, "Disconnected from MQTT broker [%s]", mqtt.broker());
         }
     }
     //printf("%s - done\n", __func__);
@@ -395,10 +390,78 @@ void mqtt_topic_update(const char *topic, const char *value) {
     tp->setValue(value);
 }
 
-/** called on program exit
+#pragma mark Modbus
+
+/**
+ * initialize modbus
+ * @returns false for configuration error, otherwise true
+ */
+bool init_modbus()
+{
+	//char str[256];
+	string rtu_port, port_config;
+	// check if mobus serial device is configured
+	if (!cfg_get_str("modbusrtu.device", rtu_port)) {
+		return true;
+	}
+	// get configuration serial device
+	if (!cfg_get_str("modbusrtu.config", port_config)) {
+			log(LOG_ERR, "Modbus RTU missing \"config\" parameter for <%s>", rtu_port.c_str());
+		return false;
+	}
+	
+	// Attempt to open serial device
+	mb = new Master(Rtu, rtu_port.c_str(), port_config.c_str());
+	if (!mb->open()) {
+		log(LOG_ERR, "Failed to open port %s at %s", rtu_port.c_str(), port_config.c_str());
+		return false;
+	}
+	
+	log(LOG_INFO, "Modbus RTU opened on port %s at %s", rtu_port.c_str(), port_config.c_str());
+	
+	return true;
+}
+
+bool modbus_test() {
+	Data<int> registers[4];
+	Slave & slv = mb->addSlave (30);
+	if (slv.readRegisters (100, registers, 1) > 0) {
+		cout << "Modbus R0=" << registers[0].value() << endl;
+	} else {
+		cerr << "Unable to read input registers ! "  << mb->lastError() << endl;
+		return false;
+	}
+	return true;
+}
+
+#pragma mark Loops
+
+/** set main loop interval to a valid setting
+ * @param newValue the new main loop interval in ms
+ */
+void setMainLoopInterval(int newValue)
+{
+	int val = newValue;
+	if (newValue < MAIN_LOOP_INTERVAL_MINIMUM) {
+		val = MAIN_LOOP_INTERVAL_MINIMUM;
+	}
+	if (newValue > MAIN_LOOP_INTERVAL_MAXIMUM) {
+		val = MAIN_LOOP_INTERVAL_MAXIMUM;
+	}
+	mainloopinterval = val;
+
+	log(LOG_INFO, "Main Loop interval is %dms", mainloopinterval);
+}
+
+/** 
+ * called on program exit
  */
 void exit_loop(void)
 {
+	// close modbus device
+	if (mb != NULL) {
+		mb->close();
+	}
 }
 
 /** Main program loop
@@ -486,8 +549,7 @@ bool parseArguments(int argc, char *argv[]) {
                       retval = false;
                       break;
                   default:
-                      std::cerr << "uknown parameter <" << &buffer[1] << ">" << endl;
-                      syslog(LOG_NOTICE, "unknown parameter: %s", argv[i]);
+                      log(LOG_NOTICE, "unknown parameter: %s", argv[i]);
                       showUsage();
                       retval = false;
                       break;
@@ -509,7 +571,7 @@ int main (int argc, char *argv[])
 
     if (! parseArguments(argc, argv) ) goto exit_fail;
 
-    syslog(LOG_INFO,"[%s] PID: %d PPID: %d", argv[0], getpid(), getppid());
+	log(LOG_INFO,"[%s] PID: %d PPID: %d", argv[0], getpid(), getppid());
 
     signal (SIGINT, sigHandler);
     //signal (SIGHUP, sigHandler);
@@ -523,21 +585,22 @@ int main (int argc, char *argv[])
 
     // read config file
     if (! readConfig()) {
-        syslog(LOG_ERR, "Error reading config file <%s>", cfgFileName.c_str());
+        log(LOG_ERR, "Error reading config file <%s>", cfgFileName.c_str());
         goto exit_fail;
     }
 
     if (!init_tags()) goto exit_fail;
     if (!mqtt_init()) goto exit_fail;
     if (!init_values()) goto exit_fail;
+	if (!init_modbus()) goto exit_fail;
     usleep(100000);
     main_loop();
 
     exit_loop();
-    syslog(LOG_INFO, "exiting");
+    log(LOG_INFO, "exiting");
     exit(EXIT_SUCCESS);
 
 exit_fail:
-    syslog(LOG_INFO, "exit with error");
+    log(LOG_INFO, "exit with error");
     exit(EXIT_FAILURE);
 }
