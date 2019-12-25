@@ -125,45 +125,45 @@ void setMainLoopInterval(int newValue)
  */
 bool readConfig (void)
 {
-    //int ival;
-    // Read the file. If there is an error, report it and exit.
+	//int ival;
+	// Read the file. If there is an error, report it and exit.
 
-    try
-    {
-        cfg.readFile(cfgFileName.c_str());
-    }
-    catch(const FileIOException &fioex)
-    {
-        std::cerr << "I/O error while reading file <" << cfgFileName << ">." << std::endl;
-        return false;
-    }
-    catch(const ParseException &pex)
-    {
-        std::cerr << "Parse error at " << pex.getFile() << ":" << pex.getLine()
-                  << " - " << pex.getError() << std::endl;
-        return false;
-    }
+	try
+	{
+		cfg.readFile(cfgFileName.c_str());
+	}
+	catch(const FileIOException &fioex)
+	{
+		std::cerr << "I/O error while reading file <" << cfgFileName << ">." << std::endl;
+		return false;
+	}
+		catch(const ParseException &pex)
+	{
+		std::cerr << "Parse error at " << pex.getFile() << ":" << pex.getLine()
+				<< " - " << pex.getError() << std::endl;
+		return false;
+	}
 
-    //syslog (LOG_INFO, "CFG file read OK");
-    //std::cerr << cfgFileName << " read OK" <<endl;
+	//syslog (LOG_INFO, "CFG file read OK");
+	//std::cerr << cfgFileName << " read OK" <<endl;
 
-    try {
-        setMainLoopInterval(cfg.lookup("mainloopinterval"));
-    } catch (const SettingNotFoundException &excp) {
-        ;
-    } catch (const SettingTypeException &excp) {
-        std::cerr << "Error in config file <" << excp.getPath() << "> is not an integer" << std::endl;
-        return false;
-    }
+	try {
+		setMainLoopInterval(cfg.lookup("mainloopinterval"));
+	} catch (const SettingNotFoundException &excp) {
+	;
+	} catch (const SettingTypeException &excp) {
+		std::cerr << "Error in config file <" << excp.getPath() << "> is not an integer" << std::endl;
+		return false;
+	}
 
-    try {
-        mqtt.setBroker(cfg.lookup("mqtt.broker"));
-    } catch (const SettingNotFoundException &excp) {
-        mqtt.setBroker(MQTT_BROKER_DEFAULT);
-    } catch (const SettingTypeException &excp) {
-        std::cerr << "Error in config file <" << excp.getPath() << "> is not a string" << std::endl;
-        return false;
-    }
+	try {
+		mqtt.setBroker(cfg.lookup("mqtt.broker"));
+	} catch (const SettingNotFoundException &excp) {
+		mqtt.setBroker(MQTT_BROKER_DEFAULT);
+	} catch (const SettingTypeException &excp) {
+		std::cerr << "Error in config file <" << excp.getPath() << "> is not a string" << std::endl;
+		return false;
+	}
 
 /*
     try {
@@ -189,7 +189,7 @@ bool readConfig (void)
         syslog(LOG_INFO, "Using GPS on port %s", gpsPort.c_str());
     }
 */
-    return true;
+	return true;
 }
 
 /**
@@ -405,43 +405,43 @@ void exit_loop(void)
  */
 void main_loop()
 {
-    bool processing_success = false;
-    clock_t start, end;
-    useconds_t sleep_usec;
-    double delta_time;
-    useconds_t processing_time;
-    useconds_t min_time = 99999999, max_time = 0;
-    useconds_t interval = mainloopinterval * 1000;	// convert ms to us
+	bool processing_success = false;
+	clock_t start, end;
+	useconds_t sleep_usec;
+	double delta_time;
+	useconds_t processing_time;
+	useconds_t min_time = 99999999, max_time = 0;
+	useconds_t interval = mainloopinterval * 1000;	// convert ms to us
 
-    // first call takes a long time (10ms)
-    while (!exitSignal) {
-        // run processing and record start/stop time
-        start = clock();
-        processing_success = process();
-        end = clock();
-        // calculate cpu time used [ms]
-        delta_time = (((double) (end - start)) / CLOCKS_PER_SEC) * 1000.0;
-        processing_time = (useconds_t) (delta_time * 1000);
+	// first call takes a long time (10ms)
+	while (!exitSignal) {
+	// run processing and record start/stop time
+		start = clock();
+		processing_success = process();
+		end = clock();
+		// calculate cpu time used [ms]
+		delta_time = (((double) (end - start)) / CLOCKS_PER_SEC) * 1000.0;
+		processing_time = (useconds_t) (delta_time * 1000);
 
-	    // store min/max times if any processing was done
-	    if (processing_success) {
-            if (processing_time > max_time) {
-                max_time = processing_time;
-            }
-            if (processing_time < min_time) {
-                min_time = processing_time;
-            }
-	    }
-        // enter loop delay if needed
-        // if cpu_time_used exceeds the mainLoopInterval
-        // then bypass the loop delay
-        if (mainloopinterval > processing_time) {
-            sleep_usec = interval - processing_time;  // sleep time in us
-            usleep(sleep_usec);
-        }
-    }
-    if (!runningAsDaemon)
-        printf("CPU time for variable processing: %dus - %dus\n", min_time, max_time);
+		// store min/max times if any processing was done
+		if (processing_success) {
+			if (processing_time > max_time) {
+				max_time = processing_time;
+			}
+			if (processing_time < min_time) {
+				min_time = processing_time;
+			}
+		}
+		// enter loop delay if needed
+		// if cpu_time_used exceeds the mainLoopInterval
+		// then bypass the loop delay
+		if (mainloopinterval > processing_time) {
+			sleep_usec = interval - processing_time;  // sleep time in us
+			usleep(sleep_usec);
+		}
+	}
+	if (!runningAsDaemon)
+		printf("CPU time for variable processing: %dus - %dus\n", min_time, max_time);
 }
 
 /** Display program usage instructions.
@@ -449,11 +449,11 @@ void main_loop()
  * @return
  */
 static void showUsage(void) {
-    cout << "usage:" << endl;
-    cout << execName << "-cCfgFileName -d -h" << endl;
-    cout << "c = name of config file (.cfg is added automatically)" << endl;
-    cout << "d = enable debug mode" << endl;
-    cout << "h = show help" << endl;
+	cout << "usage:" << endl;
+	cout << execName << "-cCfgFileName -d -h" << endl;
+	cout << "c = name of config file (.cfg is added automatically)" << endl;
+	cout << "d = enable debug mode" << endl;
+	cout << "h = show help" << endl;
 }
 
 /** Parse command line arguments.
