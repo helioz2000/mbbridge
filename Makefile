@@ -15,7 +15,7 @@ CFLAGS += -O3 -g3 -I$(INCDIR1) -I$(INCDIR2)
 
 # directory for local libs
 LDFLAGS = -L$(DESTDIR)$(PREFIX)/lib
-LIBS += -lstdc++ -lm -lmosquitto -lconfig++ -lmodbus -lmodbuspp
+LIBS += -lstdc++ -lm -lmosquitto -lconfig++ -lmodbus
 
 VPATH =
 

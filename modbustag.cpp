@@ -41,8 +41,9 @@ using namespace std;
 //
 
 ModbusTag::ModbusTag() {
-	printf("%s\n", __func__);
-	throw runtime_error("Class Tag - forbidden constructor");
+	this->address = 0;
+	//printf("%s\n", __func__);
+	//throw runtime_error("Class Tag - forbidden constructor");
 }
 
 ModbusTag::ModbusTag(const uint16_t addr) {
@@ -54,6 +55,23 @@ ModbusTag::~ModbusTag() {
 	//printf("%s - %d\n", __func__, address);
 }
 
+void ModbusTag::setAddress(int newAddress) {
+	address = newAddress;
+}
+
+uint16_t ModbusTag::getAddress(void) {
+	return address;
+}
+
+const char* ModbusTag::getTopic(void) {
+	return topic.c_str();
+}
+
+void ModbusTag::setTopic(const char *topicStr) {
+	if (topicStr != NULL) {
+		this->topic = topicStr;
+	}
+}
 
 void ModbusTag::setValue(int intValue) {
 	setValue( (uint16_t) intValue );
@@ -69,5 +87,13 @@ int ModbusTag::intValue(void) {
 
 uint16_t ModbusTag::uintValue(void) {
 	return value;
+}
+
+void ModbusTag::setUpdateCycleId(int ident) {
+	updatecycle_id = ident;
+}
+
+int ModbusTag::updateCycleId(void) {
+	return updatecycle_id;
 }
 

@@ -30,6 +30,7 @@
 #include "mqtt.h"
 #include "datatag.h"
 #include "modbustag.h"
+#include "mbbridge.h"
 
 using namespace std;
 using namespace libconfig;
@@ -64,6 +65,9 @@ useconds_t mainloopinterval = 250;   // milli seconds
 //extern void cpuTempUpdate(int x, Tag* t);
 //extern void roomTempUpdate(int x, Tag* t);
 modbus_t *mb_ctx = NULL;
+updatecycle * updateCycles = NULL;	// array of update cycle definitions
+ModbusTag * mbTags = NULL;			// array of all modbus tags
+int mbTagCount = -1;
 
 
 #pragma mark Proto types
@@ -378,12 +382,34 @@ void mqtt_topic_update(const char *topic, const char *value) {
  */
 
 bool modbus_config_tags(Setting& mbTagsSettings) {
+	int tagIndex;
+	int tagAddress;
+	int tagUpdateCycle;
+	string tagTopic;
+	
 	int numTags = mbTagsSettings.getLength();
 	if (numTags < 1) {
 		cout << "No tags Found " << endl;
 		return true;		// permissible condition
 	}
-	cout << "Found " << numTags << " tags" << endl;
+	
+	for (tagIndex = 0; tagIndex < numTags; tagIndex++) {
+		if (mbTagsSettings[tagIndex].lookupValue("address", tagAddress)) {
+			mbTags[mbTagCount].setAddress(tagAddress);
+			
+		} else {
+			log(LOG_WARNING, "Error in config file, tag address missing");
+			continue;		// skip to next tag
+		}
+		if (mbTagsSettings[tagIndex].lookupValue("update_cycle", tagUpdateCycle)) {
+			mbTags[mbTagCount].setUpdateCycleId(tagUpdateCycle);
+		}
+		if (mbTagsSettings[tagIndex].lookupValue("topic", tagTopic)) {
+			//mbTags[mbTagCount].setTopic(tagTopic.c_str());
+		}
+		mbTagCount++;
+		//cout << "Tag " << mbTagCount << " addr: " << tagAddress << " cycle: " << tagUpdateCycle << " Topic: " << tagTopic << endl;
+	}
 	return true;
 }
 
@@ -392,7 +418,7 @@ bool modbus_config_tags(Setting& mbTagsSettings) {
  */
 
 bool modbus_config_slaves(Setting& mbSlavesSettings) {
-	int slaveId;
+	int slaveId, numTags, mbTagNum, i;
 	
 	// we need at least one slave in config file
 	int numSlaves = mbSlavesSettings.getLength();
@@ -400,6 +426,19 @@ bool modbus_config_slaves(Setting& mbSlavesSettings) {
 		log(LOG_ERR, "Error in config file, no Modbus slaves found");
 		return false;
 	}
+	
+	// calculate the total number of tags for all configured slaves
+	numTags = 0;
+	for (int slavesIdx = 0; slavesIdx < numSlaves; slavesIdx++) {
+		if (mbSlavesSettings[slavesIdx].exists("tags")) {
+			Setting& mbTagsSettings = mbSlavesSettings[slavesIdx].lookup("tags");
+			numTags += mbTagsSettings.getLength();
+		}
+	}
+	
+	mbTags = new ModbusTag[numTags+1];
+	
+	mbTagCount = 0;
 	// iterate through slaves
 	for (int slavesIdx = 0; slavesIdx < numSlaves; slavesIdx++) {
 		if (mbSlavesSettings[slavesIdx].lookupValue("id", slaveId)) {
@@ -423,25 +462,74 @@ bool modbus_config_slaves(Setting& mbSlavesSettings) {
 }
 
 /**
+ * read update cycles from config file
+ */
+bool modbus_config_updatecycles(Setting& updateCyclesSettings) {
+	int idValue, interval, index;
+	int numUpdateCycles = updateCyclesSettings.getLength();
+	if (numUpdateCycles < 1) {
+		log(LOG_ERR, "Error in config file, \"updatecycles\" missing");
+		return false;
+	}
+	
+	// allocate array 
+	updateCycles = new updatecycle[numUpdateCycles+1];
+	
+	for (index = 0; index < numUpdateCycles; index++) {
+		if (updateCyclesSettings[index].lookupValue("id", idValue)) {
+		} else {
+			log(LOG_ERR, "Config error - cycleupdate ID missing in entry %d", index+1);
+			return false;
+		}
+		if (updateCyclesSettings[index].lookupValue("interval", interval)) {
+		} else {
+			log(LOG_ERR, "Config error - cycleupdate interval missing in entry %d", index+1);
+			return false;
+		}
+		updateCycles[index].ident = idValue;
+		updateCycles[index].interval = interval;
+	}
+	// mark end of data
+	updateCycles[index].ident = -1;
+	updateCycles[index].interval = -1;
+	
+	return true;
+}
+
+/**
  * read modbus configuration from config file
  */
 
 bool modbus_config() {
+	// Configure update cycles
+	try {
+		Setting& updateCyclesSettings = cfg.lookup("updatecycles");
+		if (!modbus_config_updatecycles(updateCyclesSettings)) {
+			return false; }
+	} catch (const SettingNotFoundException &excp) {
+		log(LOG_ERR, "Error in config file <%s> not found", excp.getPath());
+		return false;
+	} catch (const SettingTypeException &excp) {
+		log(LOG_ERR, "Error in config file <%s> is wrong type", excp.getPath());
+		return false;
+	}
 	
+	// Configure modbus slaves
 	try {
 		Setting& mbSlavesSettings = cfg.lookup("mbslaves");
 		if (!modbus_config_slaves(mbSlavesSettings)) {
-			log(LOG_ERR, "modbus_config_slaves failed");
-			return false;
-		}
+			return false; }
 	} catch (const SettingNotFoundException &excp) {
 		log(LOG_ERR, "Error in config file <%s> not found", excp.getPath());
 		return false;
 	} catch (const SettingTypeException &excp) {
 		log(LOG_ERR, "Error in config file <%s> is not a string", excp.getPath());
 		return false;
+	} catch (const ParseException &excp) {
+		log(LOG_ERR, "Error in config file - Parse Exception");
+		return false;
 	} catch (...) {
-		log(LOG_ERR, "Error in config file (exception)");
+		log(LOG_ERR, "modbus_config <mbslaves> Error in config file (exception)");
 		return false;
 	}
 	return true;
@@ -499,13 +587,11 @@ bool init_modbus()
 		return false;
 	}
 	
-	
 	modbus_set_debug(mb_ctx, TRUE);
 	
 	modbus_set_error_recovery(mb_ctx, modbus_error_recovery_mode(MODBUS_ERROR_RECOVERY_LINK | MODBUS_ERROR_RECOVERY_PROTOCOL));
 	
 	// Attempt to open serial device
-	//modbus_set_slave(mb_ctx, 1);
 	modbus_get_response_timeout(mb_ctx, &old_response_to_sec, &old_response_to_usec);
 	if (modbus_connect(mb_ctx) == -1) {
 		log(LOG_ERR, "Connection failed: %s\n", modbus_strerror(errno));
@@ -516,10 +602,7 @@ bool init_modbus()
 	
 	log(LOG_INFO, "Modbus RTU opened on port %s at %d", rtu_port.c_str(), port_baud);
 	
-	if (!modbus_config()) {
-		cerr << "modbus_config failed" << endl;
-		return false; }
-	
+	return modbus_config();
 	//return modbus_test();
 	
 	return true;
@@ -557,6 +640,9 @@ void exit_loop(void)
 		mb_ctx = NULL;
 		cout << "Modbus closed" << endl;
 	}
+	// free allocated memory
+	delete mbTags;
+	delete updateCycles;
 }
 
 /** Main program loop
