@@ -25,14 +25,15 @@
 
 #include <libconfig.h++>
 #include <mosquitto.h>
-#include <modbuspp.h>
+#include <modbus.h>
 
 #include "mqtt.h"
 #include "datatag.h"
+#include "modbustag.h"
 
 using namespace std;
 using namespace libconfig;
-using namespace Modbus;
+//using namespace Modbus;
 
 #define CFG_FILENAME_EXT ".cfg"
 #define CFG_DEFAULT_FILEPATH "/etc/"
@@ -62,6 +63,8 @@ char *info_label_text;
 useconds_t mainloopinterval = 250;   // milli seconds
 //extern void cpuTempUpdate(int x, Tag* t);
 //extern void roomTempUpdate(int x, Tag* t);
+modbus_t *mb_ctx = NULL;
+
 
 #pragma mark Proto types
 void subscribe_tags(void);
@@ -72,7 +75,7 @@ void setMainLoopInterval(int newValue);
 TagStore ts;
 MQTT mqtt;
 Config cfg;		// config file name
-Master *mb = NULL;		//Modbus master
+
 
 /**
  * log to console and syslog for daemon
@@ -106,12 +109,11 @@ void sigHandler(int signum)
 			break;
 	}
 
-	printf("Received %s\n", signame);
-	syslog(LOG_INFO, "Received %s", signame);
+	log(LOG_INFO, "Received %s", signame);
 	exitSignal = true;
 }
 
-#pragma mark Read Config File
+#pragma mark Config File functions
 
 /** Read configuration file.
  * @param
@@ -138,7 +140,7 @@ bool readConfig (void)
 		return false;
 	}
 
-	//syslog (LOG_INFO, "CFG file read OK");
+	//log (LOG_INFO, "CFG file read OK");
 	//std::cerr << cfgFileName << " read OK" <<endl;
 
 	try {
@@ -158,36 +160,13 @@ bool readConfig (void)
 		std::cerr << "Error in config file <" << excp.getPath() << "> is not a string" << std::endl;
 		return false;
 	}
-
-/*
-    try {
-        useGPS = cfg.lookup("useGPS");
-    } catch (const SettingNotFoundException &excp) {
-        useGPS = false;
-    } catch (const SettingTypeException &excp) {
-        std::cerr << "Error in config file <" << excp.getPath() << "> is not a bool" << std::endl;
-        return false;
-    }
-
-    if (useGPS) {
-        try {
-            gpsPort = string((const char*)cfg.lookup("gpsPort"));
-        } catch (const SettingNotFoundException &excp) {
-            useGPS = false;
-        } catch (const SettingTypeException &excp) {
-            std::cerr << "Error in config file <" << excp.getPath() << "> is not a bool" << std::endl;
-            return false;
-        }
-    }
-    if (runAsDaemon && useGPS) {
-        syslog(LOG_INFO, "Using GPS on port %s", gpsPort.c_str());
-    }
-*/
 	return true;
 }
 
-
-bool cfg_get_int(const char *path, int &value) {
+/**
+ * Get integer value from config file
+ */
+bool cfg_get_int(const std::string &path, int &value) {
 	if (!cfg.lookupValue(path, value)) {
 		std::cerr << "Error in config file <" << path << ">" << std::endl;
 		return false;
@@ -195,7 +174,9 @@ bool cfg_get_int(const char *path, int &value) {
 	return true;
 }
 
-//bool cfg_get_str(const char *path, const char* &value) {
+/**
+ * Get string value from config file
+ */
 bool cfg_get_str(const std::string &path, std::string &value) {
 	if (!cfg.lookupValue(path, value)) {
 		std::cerr << "Error in config file <" << path << ">" << std::endl;
@@ -381,16 +362,113 @@ void mqtt_connection_status(bool status) {
  * destroyed after this function returns
  */
 void mqtt_topic_update(const char *topic, const char *value) {
-    //printf("%s - %s %s\n", __func__, topic, value);
-    Tag *tp = ts.getTag(topic);
-    if (tp == NULL) {
-        fprintf(stderr, "%s: <%s> not  in ts\n", __func__, topic);
-        return;
-    }
-    tp->setValue(value);
+	//printf("%s - %s %s\n", __func__, topic, value);
+	Tag *tp = ts.getTag(topic);
+	if (tp == NULL) {
+		fprintf(stderr, "%s: <%s> not  in ts\n", __func__, topic);
+		return;
+	}
+	tp->setValue(value);
 }
 
 #pragma mark Modbus
+
+/**
+ * read tag configuration for one slave from config file
+ */
+
+bool modbus_config_tags(Setting& mbTagsSettings) {
+	int numTags = mbTagsSettings.getLength();
+	if (numTags < 1) {
+		cout << "No tags Found " << endl;
+		return true;		// permissible condition
+	}
+	cout << "Found " << numTags << " tags" << endl;
+	return true;
+}
+
+/**
+ * read slave configuration from config file
+ */
+
+bool modbus_config_slaves(Setting& mbSlavesSettings) {
+	int slaveId;
+	
+	// we need at least one slave in config file
+	int numSlaves = mbSlavesSettings.getLength();
+	if (numSlaves < 1) {
+		log(LOG_ERR, "Error in config file, no Modbus slaves found");
+		return false;
+	}
+	// iterate through slaves
+	for (int slavesIdx = 0; slavesIdx < numSlaves; slavesIdx++) {
+		if (mbSlavesSettings[slavesIdx].lookupValue("id", slaveId)) {
+			cout << "Modbus Slave: " << slaveId << endl;
+		} else {
+			log(LOG_ERR, "Config error - modbus slave ID missing in entry %d", slaveId+1);
+			return false;
+		}
+		
+		// get list of tags
+		if (mbSlavesSettings[slavesIdx].exists("tags")) {
+			Setting& mbTagsSettings = mbSlavesSettings[slavesIdx].lookup("tags");
+			if (!modbus_config_tags(mbTagsSettings)) {
+				return false; }
+		} else {
+			log(LOG_NOTICE, "No tags defined for Modbus %d", slaveId);
+			// this is a permissible condition
+		}
+	}
+	return true;
+}
+
+/**
+ * read modbus configuration from config file
+ */
+
+bool modbus_config() {
+	
+	try {
+		Setting& mbSlavesSettings = cfg.lookup("mbslaves");
+		if (!modbus_config_slaves(mbSlavesSettings)) {
+			log(LOG_ERR, "modbus_config_slaves failed");
+			return false;
+		}
+	} catch (const SettingNotFoundException &excp) {
+		log(LOG_ERR, "Error in config file <%s> not found", excp.getPath());
+		return false;
+	} catch (const SettingTypeException &excp) {
+		log(LOG_ERR, "Error in config file <%s> is not a string", excp.getPath());
+		return false;
+	} catch (...) {
+		log(LOG_ERR, "Error in config file (exception)");
+		return false;
+	}
+	return true;
+}
+
+bool modbus_test() {
+	uint16_t registers[4];
+	int rc;
+	
+	cout << "Running Modbus Test" << endl;
+	
+	modbus_set_slave(mb_ctx, 30);
+	
+	//nb_points = 10;
+	//tab_rp_registers = (uint16_t *) malloc(nb_points * sizeof(uint16_t));
+	//memset(registers, 0, nb_points * sizeof(uint16_t));
+	// read holding register
+	rc = modbus_read_registers(mb_ctx, 100, 1, registers);
+	if (rc!=1) {
+		log(LOG_ERR, "Holding Register Read failed: %s\n", modbus_strerror(errno));
+		return false;
+	} else {
+		printf("Register Value: %d\n", registers[0]);
+	}
+	return true;
+}
+
 
 /**
  * initialize modbus
@@ -399,40 +477,54 @@ void mqtt_topic_update(const char *topic, const char *value) {
 bool init_modbus()
 {
 	//char str[256];
-	string rtu_port, port_config;
+	string rtu_port;
+	int port_baud = 9600;
+	uint32_t old_response_to_sec;
+	uint32_t old_response_to_usec;
+	
 	// check if mobus serial device is configured
 	if (!cfg_get_str("modbusrtu.device", rtu_port)) {
 		return true;
 	}
 	// get configuration serial device
-	if (!cfg_get_str("modbusrtu.config", port_config)) {
-			log(LOG_ERR, "Modbus RTU missing \"config\" parameter for <%s>", rtu_port.c_str());
+	if (!cfg_get_int("modbusrtu.baudrate", port_baud)) {
+			log(LOG_ERR, "Modbus RTU missing \"baudrate\" parameter for <%s>", rtu_port.c_str());
 		return false;
 	}
+	
+	mb_ctx = modbus_new_rtu(rtu_port.c_str(), port_baud, 'N', 8, 1);
+	
+	if (mb_ctx == NULL) {
+		log(LOG_ERR, "Unable to allocate libmodbus context");
+		return false;
+	}
+	
+	
+	modbus_set_debug(mb_ctx, TRUE);
+	
+	modbus_set_error_recovery(mb_ctx, modbus_error_recovery_mode(MODBUS_ERROR_RECOVERY_LINK | MODBUS_ERROR_RECOVERY_PROTOCOL));
 	
 	// Attempt to open serial device
-	mb = new Master(Rtu, rtu_port.c_str(), port_config.c_str());
-	if (!mb->open()) {
-		log(LOG_ERR, "Failed to open port %s at %s [%s]", rtu_port.c_str(), port_config.c_str(), mb->lastError().c_str());
+	//modbus_set_slave(mb_ctx, 1);
+	modbus_get_response_timeout(mb_ctx, &old_response_to_sec, &old_response_to_usec);
+	if (modbus_connect(mb_ctx) == -1) {
+		log(LOG_ERR, "Connection failed: %s\n", modbus_strerror(errno));
+		modbus_free(mb_ctx);
+		mb_ctx = NULL;
 		return false;
 	}
 	
-	log(LOG_INFO, "Modbus RTU opened on port %s at %s", rtu_port.c_str(), port_config.c_str());
+	log(LOG_INFO, "Modbus RTU opened on port %s at %d", rtu_port.c_str(), port_baud);
+	
+	if (!modbus_config()) {
+		cerr << "modbus_config failed" << endl;
+		return false; }
+	
+	//return modbus_test();
 	
 	return true;
 }
 
-bool modbus_test() {
-	Data<int> registers[4];
-	Slave & slv = mb->addSlave (30);
-	if (slv.readRegisters (100, registers, 1) > 0) {
-		cout << "Modbus R0=" << registers[0].value() << endl;
-	} else {
-		cerr << "Unable to read input registers ! "  << mb->lastError() << endl;
-		return false;
-	}
-	return true;
-}
 
 #pragma mark Loops
 
@@ -459,8 +551,11 @@ void setMainLoopInterval(int newValue)
 void exit_loop(void)
 {
 	// close modbus device
-	if (mb != NULL) {
-		mb->close();
+	if (mb_ctx != NULL) {
+		modbus_close(mb_ctx);
+		modbus_free(mb_ctx);
+		mb_ctx = NULL;
+		cout << "Modbus closed" << endl;
 	}
 }
 
