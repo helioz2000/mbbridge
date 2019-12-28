@@ -46,7 +46,7 @@ using namespace libconfig;
 
 #define MQTT_CONNECT_TIMEOUT 5      // seconds
 #define MQTT_BROKER_DEFAULT "127.0.0.1"
-#define CPU_TEMP_TOPIC "ham/vk2ray/site/raylog/cpu/temp"
+#define CPU_TEMP_TOPIC "binder/home/mqtt/pi/cpu/temp"
 //#define ENV_TEMP_TOPIC "binder/home/screen1/env/temp"
 
 const char *build_date_str = __DATE__ " " __TIME__;
@@ -54,6 +54,7 @@ static string cfgFileName;
 static string execName;
 bool exitSignal = false;
 bool debugEnabled = false;
+bool modbusDebugEnabled = false;
 bool runningAsDaemon = false;
 time_t var_process_time = time(NULL) + VAR_PROCESS_INTERVAL;
 time_t mqtt_connection_timeout = 0;
@@ -75,6 +76,7 @@ void subscribe_tags(void);
 void mqtt_connection_status(bool status);
 void mqtt_topic_update(const char *topic, const char *value);
 void setMainLoopInterval(int newValue);
+bool modbus_read_tag(ModbusTag tag);
 
 TagStore ts;
 MQTT mqtt;
@@ -115,6 +117,17 @@ void sigHandler(int signum)
 
 	log(LOG_INFO, "Received %s", signame);
 	exitSignal = true;
+}
+
+void timespec_diff(struct timespec *start, struct timespec *stop, struct timespec *result) {
+	if ((stop->tv_nsec - start->tv_nsec) < 0) {
+		result->tv_sec = stop->tv_sec - start->tv_sec - 1;
+		result->tv_nsec = stop->tv_nsec - start->tv_nsec + 1000000000;
+	} else {
+		result->tv_sec = stop->tv_sec - start->tv_sec;
+	result->tv_nsec = stop->tv_nsec - start->tv_nsec;
+	}
+	return;
 }
 
 #pragma mark -- Config File functions
@@ -229,8 +242,15 @@ bool var_process(void) {
     return retval;
 }
 
+/*
+ * process modbus cyclic update
+ * @returns false is there was nothing to process, otherwise true
+ */
 bool modbus_process() {
 	int index = 0;
+	int tagIndex = 0;
+	int *tagArray;
+	bool retval = false;
 	time_t now = time(NULL);
 	while (updateCycles[index].ident >= 0) {
 		// ignore if cycle has no tags to process
@@ -240,21 +260,30 @@ bool modbus_process() {
 		if (now >= updateCycles[index].nextUpdateTime) {
 			// set next update cycle time
 			updateCycles[index].nextUpdateTime = now + updateCycles[index].interval;
+			// get array for tags
+			tagArray = updateCycles[index].tagArray;
+			// read each tag in the array
+			tagIndex = 0;
+			while (tagArray[tagIndex] >= 0) {
+				modbus_read_tag(mbTags[tagArray[tagIndex]]);
+				tagIndex++;
+			}
+			retval = true;
 			//cout << now << " Update Cycle: " << updateCycles[index].ident << " - " << updateCycles[index].tagArraySize << " tags" << endl;
 		}
 		index++;
 	}
 	
-	return true;
+	return retval;
 }
 
 /** Process all  variables
  * @return true if at least one variable was processed
  */
 bool process() {
-	bool retval = true;
-	if (!modbus_process()) retval = false;
-	if (!var_process()) retval = false;
+	bool retval = false;
+	if (modbus_process()) retval = true;
+	if (var_process()) retval = true;
 	return retval;
 }
 
@@ -328,13 +357,17 @@ void mqtt_connect(void) {
  * Initialise the MQTT broker and register callbacks
  */
 bool mqtt_init(void) {
-    if (debugEnabled) {
-        mqtt.setConsoleLog(true);
-    }
-    mqtt.registerConnectionCallback(mqtt_connection_status);
-    mqtt.registerTopicUpdateCallback(mqtt_topic_update);
-    mqtt_connect();
-    return true;
+	bool bValue;
+	if (!runningAsDaemon) {
+		if (cfg.lookupValue("mqtt.debug", bValue)) {
+			mqtt.setConsoleLog(bValue);
+			if (bValue) printf("%s - mqtt debug enabled\n", __func__);
+		}
+	}
+	mqtt.registerConnectionCallback(mqtt_connection_status);
+	mqtt.registerTopicUpdateCallback(mqtt_topic_update);
+	mqtt_connect();
+	return true;
 }
 
 /**
@@ -342,16 +375,16 @@ bool mqtt_init(void) {
  * Iterate over tag store and process every "subscribe" tag
  */
 void subscribe_tags(void) {
-    //printf("%s - Start\n", __func__);
-    Tag* tp = ts.getFirstTag();
-    while (tp != NULL) {
-        if (tp->isSubscribe()) {
-            //printf("%s: %s\n", __func__, tp->getTopic());
-            mqtt.subscribe(tp->getTopic());
-        }
-        tp = ts.getNextTag();
-    }
-    //printf("%s - Done\n", __func__);
+	//printf("%s - Start\n", __func__);
+	Tag* tp = ts.getFirstTag();
+	while (tp != NULL) {
+		if (tp->isSubscribe()) {
+		//printf("%s: %s\n", __func__, tp->getTopic());
+			mqtt.subscribe(tp->getTopic());
+		}
+		tp = ts.getNextTag();
+	}
+	//printf("%s - Done\n", __func__);
 }
 
 /**
@@ -398,6 +431,28 @@ void mqtt_topic_update(const char *topic, const char *value) {
 }
 
 #pragma mark Modbus
+
+bool modbus_read_tag(ModbusTag tag) {
+	uint16_t registers[4];
+	int rc;
+
+	if (modbusDebugEnabled)
+		printf ("%s - reading slave %d HR %d\n", __func__, tag.getSlaveId(), tag.getAddress());
+
+	modbus_set_slave(mb_ctx, tag.getSlaveId());
+	
+	rc = modbus_read_registers(mb_ctx, tag.getAddress(), 1, registers);
+	if (rc!=1) {
+		// errno 110 = timeout
+		// errno 
+		log(LOG_ERR, "Modbus Read failed (%x): %s", errno, modbus_strerror(errno));
+		return false;
+	} else {
+		if (modbusDebugEnabled) printf("%s - reading success, value = %d [0x%04x]\n", __func__, registers[0], registers[0]);
+	}
+	return true;
+}
+
 
 /**
  * assign tags to update cycles
@@ -502,7 +557,7 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
  */
 
 bool modbus_config_slaves(Setting& mbSlavesSettings) {
-	int slaveId, numTags, mbTagNum, i;
+	int slaveId, numTags;
 	
 	// we need at least one slave in config file
 	int numSlaves = mbSlavesSettings.getLength();
@@ -624,29 +679,6 @@ bool modbus_config() {
 	return true;
 }
 
-bool modbus_test() {
-	uint16_t registers[4];
-	int rc;
-	
-	cout << "Running Modbus Test" << endl;
-	
-	modbus_set_slave(mb_ctx, 30);
-	
-	//nb_points = 10;
-	//tab_rp_registers = (uint16_t *) malloc(nb_points * sizeof(uint16_t));
-	//memset(registers, 0, nb_points * sizeof(uint16_t));
-	// read holding register
-	rc = modbus_read_registers(mb_ctx, 100, 1, registers);
-	if (rc!=1) {
-		log(LOG_ERR, "Holding Register Read failed: %s\n", modbus_strerror(errno));
-		return false;
-	} else {
-		printf("Register Value: %d\n", registers[0]);
-	}
-	return true;
-}
-
-
 /**
  * initialize modbus
  * @returns false for configuration error, otherwise true
@@ -656,8 +688,10 @@ bool init_modbus()
 	//char str[256];
 	string rtu_port;
 	int port_baud = 9600;
-	uint32_t old_response_to_sec;
-	uint32_t old_response_to_usec;
+	uint32_t response_to_sec = 0;
+	uint32_t response_to_usec = 0;
+	int newValue;
+	//bool boolValue;
 	
 	// check if mobus serial device is configured
 	if (!cfg_get_str("modbusrtu.device", rtu_port)) {
@@ -669,6 +703,7 @@ bool init_modbus()
 		return false;
 	}
 	
+	// Create modbus context
 	mb_ctx = modbus_new_rtu(rtu_port.c_str(), port_baud, 'N', 8, 1);
 	
 	if (mb_ctx == NULL) {
@@ -676,12 +711,35 @@ bool init_modbus()
 		return false;
 	}
 	
-	modbus_set_debug(mb_ctx, TRUE);
+	if (!runningAsDaemon) {
+		cfg.lookupValue("modbusrtu.debug", modbusDebugEnabled);
+		if (modbusDebugEnabled)
+			printf("%s - Modbus Debug Enabled\n", __func__);
+	}
+
+	// set new response timeout if configured
+	if (cfg_get_int("modbusrtu.responsetimeout_us", newValue)) {
+		response_to_usec = newValue;
+	}
+	if (cfg_get_int("modbusrtu.responsetimeout_s", newValue)) {
+		response_to_sec = newValue;
+	}
+	if ((response_to_usec > 0) || (response_to_sec > 0)) {
+		modbus_set_response_timeout(mb_ctx, response_to_sec, response_to_usec);
+	}
+
+	if (modbusDebugEnabled) {
+		// enable libmodbus debugging
+		if (cfg_get_int("modbusrtu.debuglevel", newValue)) {
+			if (newValue > 1) modbus_set_debug(mb_ctx, TRUE);
+		}
+		if (modbus_get_response_timeout(mb_ctx, &response_to_sec, &response_to_usec) >= 0)
+			printf("%s response timeout %ds %dus\n", __func__, response_to_sec, response_to_usec);
+	}
 	
-	modbus_set_error_recovery(mb_ctx, modbus_error_recovery_mode(MODBUS_ERROR_RECOVERY_LINK | MODBUS_ERROR_RECOVERY_PROTOCOL));
+	//modbus_set_error_recovery(mb_ctx, modbus_error_recovery_mode(MODBUS_ERROR_RECOVERY_LINK | MODBUS_ERROR_RECOVERY_PROTOCOL));
 	
 	// Attempt to open serial device
-	modbus_get_response_timeout(mb_ctx, &old_response_to_sec, &old_response_to_usec);
 	if (modbus_connect(mb_ctx) == -1) {
 		log(LOG_ERR, "Connection failed: %s\n", modbus_strerror(errno));
 		modbus_free(mb_ctx);
@@ -700,7 +758,8 @@ bool init_modbus()
 
 #pragma mark Loops
 
-/** set main loop interval to a valid setting
+/** 
+ * set main loop interval to a valid setting
  * @param newValue the new main loop interval in ms
  */
 void setMainLoopInterval(int newValue)
@@ -747,39 +806,45 @@ void exit_loop(void)
 void main_loop()
 {
 	bool processing_success = false;
-	clock_t start, end;
+	//clock_t start, end;
+	struct timespec starttime, endtime, difftime;
 	useconds_t sleep_usec;
-	double delta_time;
+	//double delta_time;
 	useconds_t processing_time;
 	useconds_t min_time = 99999999, max_time = 0;
 	useconds_t interval = mainloopinterval * 1000;	// convert ms to us
-
+	
 	// first call takes a long time (10ms)
 	while (!exitSignal) {
 	// run processing and record start/stop time
-		start = clock();
+		clock_gettime(CLOCK_MONOTONIC, &starttime);
 		processing_success = process();
-		end = clock();
-		// calculate cpu time used [ms]
-		delta_time = (((double) (end - start)) / CLOCKS_PER_SEC) * 1000.0;
-		processing_time = (useconds_t) (delta_time * 1000);
+		clock_gettime(CLOCK_MONOTONIC, &endtime);
+		// calculate cpu time used [us]
+		timespec_diff(&starttime, &endtime, &difftime);
+		processing_time = (difftime.tv_nsec / 1000) + (difftime.tv_sec * 1000000);
 
 		// store min/max times if any processing was done
 		if (processing_success) {
+			// calculate cpu time used [us]
+			if (debugEnabled)
+				printf("%s - process() took %dus\n", __func__, processing_time);
 			if (processing_time > max_time) {
 				max_time = processing_time;
 			}
 			if (processing_time < min_time) {
 				min_time = processing_time;
 			}
+			//printf("%s - success (%dus)\n", __func__, processing_time);
 		}
 		// enter loop delay if needed
 		// if cpu_time_used exceeds the mainLoopInterval
 		// then bypass the loop delay
-		if (mainloopinterval > processing_time) {
+		if (interval > processing_time) {
 			sleep_usec = interval - processing_time;  // sleep time in us
+			//printf("%s - sleeping for %dus (%dus)\n", __func__, sleep_usec, processing_time);
 			usleep(sleep_usec);
-		}
+		} 
 	}
 	if (!runningAsDaemon)
 		printf("CPU time for variable processing: %dus - %dus\n", min_time, max_time);
