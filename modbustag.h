@@ -61,13 +61,19 @@ public:
 	* Set the value
 	* @param uintValue: the new value
 	*/
-	void setValue(uint16_t uintValue);
+	void setRawValue(uint16_t uintValue);
 
 	/**
-	* Set the value
-	* @param intValue: the new value
+	* Get value
+	* @return value as uint
 	*/
-	void setValue(int intValue);
+	uint16_t getRawValue(void);
+
+	/**
+	* Get scaled value
+	* @return scaled value as float
+	*/
+	float getScaledValue(void);
 
 	/**
 	* Set the updatecycle_id
@@ -88,22 +94,37 @@ public:
 	const char* getTopic(void);
 
 	/**
+	* Get the topic string
+	* @return the topic string as std:strig
+	*/
+	std::string getTopicString(void);
+
+	/**
 	 * Set topic string
 	 */
 	void setTopic(const char*);
 
 	/**
-	* Get value
-	* @return value as int
+	* Get the format string
+	* @return the format string
 	*/
-	int intValue(void);
+	const char* getFormat(void);
 
 	/**
-	* Get value
-	* @return value as uint
-	*/
-	uint16_t uintValue(void);
+	 * Set format string
+	 */
+	void setFormat(const char*);
 
+	/**
+	* Set multiplier
+	*/
+	void setMultiplier(float);
+	
+	/**
+	* Set offset value
+	*/
+	void setOffset(float);
+	
 	// public members used to store data which is not used inside this class
 	//int readInterval;                   // seconds between reads
 	//time_t nextReadTime;                // next scheduled read
@@ -114,9 +135,12 @@ private:
 	// All properties of this class are private
 	// Use setters & getters to access these values
 	std::string topic;				// storage for topic path
+	std::string format;				// storage for publish format
+	float multiplier;				// multiplier for scaled value
+	float offset;					// offset for scaled value
 	uint8_t	slaveId;				// modbus address of slave
 	uint16_t address;				// the address of the modbus tag in the slave
-	uint16_t value;					// the value of this modbus tag
+	uint16_t rawValue;					// the value of this modbus tag
 	int updatecycle_id;				// update cycle identifier
 	time_t lastUpdateTime;			// last update time (change of value)
 };

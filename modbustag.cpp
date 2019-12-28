@@ -44,13 +44,17 @@ ModbusTag::ModbusTag() {
 	this->address = 0;
 	this->topic = "";
 	this->slaveId = 0;
+	this->rawValue = 0;
+	this->multiplier = 1.0;
+	this->offset = 0.0;
+	this->format = "%f";
 	//printf("%s constructor\n", __func__);
 	//throw runtime_error("Class Tag - forbidden constructor");
 }
 
 ModbusTag::ModbusTag(const uint16_t addr) {
 	this->address = addr;
-	this->value = 0;
+	this->rawValue = 0;
 }
 
 ModbusTag::~ModbusTag() {
@@ -75,31 +79,50 @@ uint16_t ModbusTag::getAddress(void) {
 	return address;
 }
 
-const char* ModbusTag::getTopic(void) {
-	return topic.c_str();
-	//return NULL;
-}
-
 void ModbusTag::setTopic(const char *topicStr) {
 	if (topicStr != NULL) {
-		this->topic = topicStr;
+		topic = topicStr;
 	}
 }
 
-void ModbusTag::setValue(int intValue) {
-	setValue( (uint16_t) intValue );
+const char* ModbusTag::getTopic(void) {
+	return topic.c_str();
 }
 
-void ModbusTag::setValue(uint16_t uintValue) {
-	value = uintValue;
+std::string ModbusTag::getTopicString(void) {
+	return topic;
 }
 
-int ModbusTag::intValue(void) {
-	return (int) value;
+void ModbusTag::setFormat(const char *formatStr) {
+	if (formatStr != NULL) {
+		format = formatStr;
+	}
 }
 
-uint16_t ModbusTag::uintValue(void) {
-	return value;
+const char* ModbusTag::getFormat(void) {
+	return format.c_str();
+}
+
+void ModbusTag::setRawValue(uint16_t uintValue) {
+	rawValue = uintValue;
+}
+
+uint16_t ModbusTag::getRawValue(void) {
+	return rawValue;
+}
+
+float ModbusTag::getScaledValue(void) {
+	float fValue = (float) rawValue;
+	fValue *= multiplier;
+	return fValue + offset;
+}
+
+void ModbusTag::setMultiplier(float newMultiplier) {
+	multiplier = newMultiplier;
+}
+
+void ModbusTag::setOffset(float newOffset) {
+	offset = newOffset;
 }
 
 void ModbusTag::setUpdateCycleId(int ident) {
