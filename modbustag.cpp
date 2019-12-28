@@ -42,7 +42,9 @@ using namespace std;
 
 ModbusTag::ModbusTag() {
 	this->address = 0;
-	//printf("%s\n", __func__);
+	this->topic = "";
+	this->slaveId = 0;
+	//printf("%s constructor\n", __func__);
 	//throw runtime_error("Class Tag - forbidden constructor");
 }
 
@@ -52,7 +54,17 @@ ModbusTag::ModbusTag(const uint16_t addr) {
 }
 
 ModbusTag::~ModbusTag() {
-	//printf("%s - %d\n", __func__, address);
+	//cout << "Topic: <" << topic << ">" << endl;
+	//printf("%s - destructor %d\n", __func__, address);
+}
+
+
+void ModbusTag::setSlaveId(int newId) {
+	slaveId = newId;
+}
+
+uint8_t ModbusTag::getSlaveId(void) {
+	return slaveId;
 }
 
 void ModbusTag::setAddress(int newAddress) {
@@ -65,6 +77,7 @@ uint16_t ModbusTag::getAddress(void) {
 
 const char* ModbusTag::getTopic(void) {
 	return topic.c_str();
+	//return NULL;
 }
 
 void ModbusTag::setTopic(const char *topicStr) {

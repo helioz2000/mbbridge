@@ -117,7 +117,7 @@ void sigHandler(int signum)
 	exitSignal = true;
 }
 
-#pragma mark Config File functions
+#pragma mark -- Config File functions
 
 /** Read configuration file.
  * @param
@@ -189,7 +189,7 @@ bool cfg_get_str(const std::string &path, std::string &value) {
 	return true;
 }
 
-#pragma mark Processing
+#pragma mark -- Processing
 
 /**
  * Process variables
@@ -229,11 +229,33 @@ bool var_process(void) {
     return retval;
 }
 
+bool modbus_process() {
+	int index = 0;
+	time_t now = time(NULL);
+	while (updateCycles[index].ident >= 0) {
+		// ignore if cycle has no tags to process
+		if (updateCycles[index].tagArray == NULL) {
+			index++; continue;
+		}
+		if (now >= updateCycles[index].nextUpdateTime) {
+			// set next update cycle time
+			updateCycles[index].nextUpdateTime = now + updateCycles[index].interval;
+			//cout << now << " Update Cycle: " << updateCycles[index].ident << " - " << updateCycles[index].tagArraySize << " tags" << endl;
+		}
+		index++;
+	}
+	
+	return true;
+}
+
 /** Process all  variables
  * @return true if at least one variable was processed
  */
 bool process() {
-	return var_process();
+	bool retval = true;
+	if (!modbus_process()) retval = false;
+	if (!var_process()) retval = false;
+	return retval;
 }
 
 bool init_values(void)
@@ -378,10 +400,72 @@ void mqtt_topic_update(const char *topic, const char *value) {
 #pragma mark Modbus
 
 /**
+ * assign tags to update cycles
+ * generate arrays of tags assigned ot the same updatecycle
+ * 1) iterate over update cycles
+ * 2) count tags which refer to update cycle
+ * 3) allocate array for those tags
+ * 4) fill array with index of tags that match update cycle
+ * 5) assign array to update cycle
+ * 6) go back to 1) until all update cycles have been matched
+ */
+bool modbus_assign_updatecycles () {
+	int updidx = 0;
+	int mbTagIdx = 0;
+	int cycleIdent = 0;
+	int matchCount = 0;
+	int *intArray = NULL;
+	int arIndex = 0;
+	// iterate over updatecycle array
+	while (updateCycles[updidx].ident >= 0) {
+		cycleIdent = updateCycles[updidx].ident;
+		updateCycles[updidx].tagArray = NULL;
+		updateCycles[updidx].tagArraySize = 0;
+		// iterate over mbTags array
+		mbTagIdx = 0;
+		matchCount = 0;
+		while (mbTags[mbTagIdx].updateCycleId() >= 0) {
+			// count tags with cycle id match
+			if (mbTags[mbTagIdx].updateCycleId() == cycleIdent) {
+				matchCount++;
+				//cout << cycleIdent <<" " << mbTags[mbTagIdx].getAddress() << endl;
+			}
+			mbTagIdx++;
+		}
+		// skip to next cycle update if we have no matching tags
+		if (matchCount < 1) {
+			updidx++;
+			continue;
+		}
+		// -- We have some matching tags
+		// allocate array for tags in this cycleupdate
+		intArray = new int[matchCount+1];			// +1 to allow for end marker
+		// fill array with matching tag indexes
+		mbTagIdx = 0;
+		arIndex = 0;
+		while (mbTags[mbTagIdx].updateCycleId() >= 0) {
+			// count tags with cycle id match
+			if (mbTags[mbTagIdx].updateCycleId() == cycleIdent) {
+				intArray[arIndex] = mbTagIdx;
+				arIndex++;
+			}
+			mbTagIdx++;
+		}
+		// mark end of array
+		intArray[arIndex] = -1;
+		// add the array to the update cycles
+		updateCycles[updidx].tagArray = intArray;
+		updateCycles[updidx].tagArraySize = arIndex;
+		// next update index
+		updidx++;
+	}
+	return true;
+}
+
+/**
  * read tag configuration for one slave from config file
  */
-
-bool modbus_config_tags(Setting& mbTagsSettings) {
+bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 	int tagIndex;
 	int tagAddress;
 	int tagUpdateCycle;
@@ -396,7 +480,7 @@ bool modbus_config_tags(Setting& mbTagsSettings) {
 	for (tagIndex = 0; tagIndex < numTags; tagIndex++) {
 		if (mbTagsSettings[tagIndex].lookupValue("address", tagAddress)) {
 			mbTags[mbTagCount].setAddress(tagAddress);
-			
+			mbTags[mbTagCount].setSlaveId(slaveId);
 		} else {
 			log(LOG_WARNING, "Error in config file, tag address missing");
 			continue;		// skip to next tag
@@ -405,7 +489,7 @@ bool modbus_config_tags(Setting& mbTagsSettings) {
 			mbTags[mbTagCount].setUpdateCycleId(tagUpdateCycle);
 		}
 		if (mbTagsSettings[tagIndex].lookupValue("topic", tagTopic)) {
-			//mbTags[mbTagCount].setTopic(tagTopic.c_str());
+			mbTags[mbTagCount].setTopic(tagTopic.c_str());
 		}
 		mbTagCount++;
 		//cout << "Tag " << mbTagCount << " addr: " << tagAddress << " cycle: " << tagUpdateCycle << " Topic: " << tagTopic << endl;
@@ -451,13 +535,16 @@ bool modbus_config_slaves(Setting& mbSlavesSettings) {
 		// get list of tags
 		if (mbSlavesSettings[slavesIdx].exists("tags")) {
 			Setting& mbTagsSettings = mbSlavesSettings[slavesIdx].lookup("tags");
-			if (!modbus_config_tags(mbTagsSettings)) {
+			if (!modbus_config_tags(mbTagsSettings, slaveId)) {
 				return false; }
 		} else {
 			log(LOG_NOTICE, "No tags defined for Modbus %d", slaveId);
 			// this is a permissible condition
 		}
 	}
+	// mark end of array
+	mbTags[mbTagCount].setUpdateCycleId(-1);
+	
 	return true;
 }
 
@@ -488,6 +575,8 @@ bool modbus_config_updatecycles(Setting& updateCyclesSettings) {
 		}
 		updateCycles[index].ident = idValue;
 		updateCycles[index].interval = interval;
+		updateCycles[index].nextUpdateTime = time(0) + interval;
+		//cout << "Update " << index << " ID " << idValue << " Interval: " << interval << " t:" << updateCycles[index].nextUpdateTime << endl;
 	}
 	// mark end of data
 	updateCycles[index].ident = -1;
@@ -602,12 +691,12 @@ bool init_modbus()
 	
 	log(LOG_INFO, "Modbus RTU opened on port %s at %d", rtu_port.c_str(), port_baud);
 	
-	return modbus_config();
+	if (!modbus_config()) return false;
+	if (!modbus_assign_updatecycles()) return false;
 	//return modbus_test();
 	
 	return true;
 }
-
 
 #pragma mark Loops
 
@@ -641,9 +730,17 @@ void exit_loop(void)
 		cout << "Modbus closed" << endl;
 	}
 	// free allocated memory
-	delete mbTags;
-	delete updateCycles;
-}
+	// arrays of tags in cycleupdates
+	int *ar, idx=0;
+	while (updateCycles[idx].ident >= 0) {
+		ar = updateCycles[idx].tagArray;
+		if (ar != NULL) delete [] ar;		// delete array if one exists
+		idx++;
+	}
+	
+	delete [] updateCycles;
+	delete [] mbTags;
+	}
 
 /** Main program loop
  */
@@ -706,82 +803,81 @@ static void showUsage(void) {
  * @return false to indicate program needs to abort
  */
 bool parseArguments(int argc, char *argv[]) {
-  char buffer[64];
-    int i, buflen;
-    int retval = true;
-  execName = std::string(basename(argv[0]));
-  cfgFileName = execName;
+	char buffer[64];
+	int i, buflen;
+	int retval = true;
+	execName = std::string(basename(argv[0]));
+	cfgFileName = execName;
 
-  if (argc > 1) {
-      for (i = 1; i < argc; i++) {
-          strcpy(buffer, argv[i]);
-          buflen = strlen(buffer);
-          if ((buffer[0] == '-') && (buflen >=2)) {
-              switch (buffer[1]) {
-                  case 'c':
-                      cfgFileName = std::string(&buffer[1]);
-                      break;
-                  case 'd':
-                      debugEnabled = true;
-                      printf("Debug enabled\n");
-                      break;
-                  case 'h':
-                      showUsage();
-                      retval = false;
-                      break;
-                  default:
-                      log(LOG_NOTICE, "unknown parameter: %s", argv[i]);
-                      showUsage();
-                      retval = false;
-                      break;
-                }
-                ;
-            } // if
-        }  // for (i)
-    }  //if (argc >1)
-
-    // add config file extension
-    cfgFileName += std::string(CFG_FILENAME_EXT);
-    return retval;
+	if (argc > 1) {
+		for (i = 1; i < argc; i++) {
+			strcpy(buffer, argv[i]);
+			buflen = strlen(buffer);
+			if ((buffer[0] == '-') && (buflen >=2)) {
+				switch (buffer[1]) {
+				case 'c':
+					cfgFileName = std::string(&buffer[1]);
+					break;
+				case 'd':
+					debugEnabled = true;
+					printf("Debug enabled\n");
+					break;
+				case 'h':
+					showUsage();
+					retval = false;
+					break;
+				default:
+					log(LOG_NOTICE, "unknown parameter: %s", argv[i]);
+					showUsage();
+					retval = false;
+					break;
+				} // switch
+				;
+			} // if
+		}  // for (i)
+	}  // if (argc >1)
+	// add config file extension
+	cfgFileName += std::string(CFG_FILENAME_EXT);
+	return retval;
 }
 
 int main (int argc, char *argv[])
 {
-    if ( getppid() == 1) runningAsDaemon = true;
-    processName =  argv[0];
+	if ( getppid() == 1) runningAsDaemon = true;
+	processName =  argv[0];
 
-    if (! parseArguments(argc, argv) ) goto exit_fail;
+	if (! parseArguments(argc, argv) ) goto exit_fail;
 
 	log(LOG_INFO,"[%s] PID: %d PPID: %d", argv[0], getpid(), getppid());
 
-    signal (SIGINT, sigHandler);
-    //signal (SIGHUP, sigHandler);
+	signal (SIGINT, sigHandler);
+	//signal (SIGHUP, sigHandler);
 
-    // catch SIGTERM only if running as daemon (started via systemctl)
-    // when run from command line SIGTERM provides a last resort method
-    // of killing the process regardless of any programming errors.
-    if (runningAsDaemon) {
-        signal (SIGTERM, sigHandler);
-    }
+	// catch SIGTERM only if running as daemon (started via systemctl)
+	// when run from command line SIGTERM provides a last resort method
+	// of killing the process regardless of any programming errors.
+	if (runningAsDaemon) {
+		signal (SIGTERM, sigHandler);
+	}
 
-    // read config file
-    if (! readConfig()) {
-        log(LOG_ERR, "Error reading config file <%s>", cfgFileName.c_str());
-        goto exit_fail;
-    }
+	// read config file
+	if (! readConfig()) {
+		log(LOG_ERR, "Error reading config file <%s>", cfgFileName.c_str());
+		goto exit_fail;
+	}
 
-    if (!init_tags()) goto exit_fail;
-    if (!mqtt_init()) goto exit_fail;
-    if (!init_values()) goto exit_fail;
+	if (!init_tags()) goto exit_fail;
+	if (!mqtt_init()) goto exit_fail;
+	if (!init_values()) goto exit_fail;
 	if (!init_modbus()) goto exit_fail;
-    usleep(100000);
-    main_loop();
+	usleep(100000);
+	main_loop();
 
-    exit_loop();
-    log(LOG_INFO, "exiting");
-    exit(EXIT_SUCCESS);
+	exit_loop();
+	log(LOG_INFO, "exiting");
+	exit(EXIT_SUCCESS);
 
 exit_fail:
-    log(LOG_INFO, "exit with error");
-    exit(EXIT_FAILURE);
+	log(LOG_INFO, "exit with error");
+	exit(EXIT_FAILURE);
 }

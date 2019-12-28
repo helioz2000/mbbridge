@@ -39,12 +39,23 @@ public:
 	*/
 	void setAddress(int newAddress);
 
-
 	/**
 	* Get the tag address string
 	* @return the tag address
 	*/
 	uint16_t getAddress(void);
+
+	/**
+	* Set the modbus slave id
+	* @param newId: the new slave ID
+	*/
+	void setSlaveId(int newId);
+
+	/**
+	* Get the slave ID
+	* @return the slave ID
+	*/
+	uint8_t getSlaveId(void);
 
 	/**
 	* Set the value
@@ -93,19 +104,17 @@ public:
 	*/
 	uint16_t uintValue(void);
 
-
-
-
-    // public members used to store data which is not used inside this class
-    //int readInterval;                   // seconds between reads
-    //time_t nextReadTime;                // next scheduled read
-    //int publishInterval;                // seconds between publish
-    //time_t nextPublishTime;             // next publish time
+	// public members used to store data which is not used inside this class
+	//int readInterval;                   // seconds between reads
+	//time_t nextReadTime;                // next scheduled read
+	//int publishInterval;                // seconds between publish
+	//time_t nextPublishTime;             // next publish time
 
 private:
 	// All properties of this class are private
 	// Use setters & getters to access these values
 	std::string topic;				// storage for topic path
+	uint8_t	slaveId;				// modbus address of slave
 	uint16_t address;				// the address of the modbus tag in the slave
 	uint16_t value;					// the value of this modbus tag
 	int updatecycle_id;				// update cycle identifier
