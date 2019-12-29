@@ -71,7 +71,8 @@ updatecycle *updateCycles = NULL;	// array of update cycle definitions
 ModbusTag *mbReadTags = NULL;			// array of all modbus read tags
 ModbusTag *mbWriteTags = NULL;			// array of all modbus write tags
 int mbTagCount = -1;
-#define MODBUS_SLAVE_MAX 254
+#define MODBUS_SLAVE_MAX 254		// highest permitted slave ID
+#define MODBUS_SLAVE_MIN 1			// lowest permitted slave ID
 bool mbSlaveOnline[MODBUS_SLAVE_MAX+1];			// array to store online/offline status
 
 #pragma mark Proto types
@@ -255,14 +256,16 @@ bool var_process(void) {
  */
 bool modbus_write_process() {
 	int idx = 0;
-	while (mbWriteTags[idx].getSlaveId() > 0) {
+	uint8_t slaveId = mbWriteTags[idx].getSlaveId();
+	while ((slaveId >= MODBUS_SLAVE_MIN) && (slaveId <= MODBUS_SLAVE_MAX)) {
 		if (mbWriteTags[idx].getWritePending()) {
-			//printf ("%s - writing %d to Slave %d Addr %d\n", __func__, mbWriteTags[idx].getRawValue(),mbWriteTags[idx].getSlaveId(), mbWriteTags[idx].getAddress());
+			//printf ("%s - writing %d to Slave %d Addr %d idx %d\n", __func__, mbWriteTags[idx].getRawValue(),slaveId, mbWriteTags[idx].getAddress(), idx);
 			modbus_write_tag(mbWriteTags[idx]);
 			mbWriteTags[idx].setWritePending(false);	// mark as write done
 			return true;			// end here, we only do one write
 			}
 		idx++;
+		slaveId = mbWriteTags[idx].getSlaveId();
 	}
 	return false;
 }
@@ -308,8 +311,10 @@ bool modbus_read_process() {
  */
 bool process() {
 	bool retval = false;
-	if (modbus_read_process()) retval = true;
-	if (modbus_write_process()) retval = true;
+	if (mqtt.isConnected()) {
+		if (modbus_read_process()) retval = true;
+		if (modbus_write_process()) retval = true;
+	}
 	var_process();	// don't want it in time measuring, doesn't take up much time
 	return retval;
 }
@@ -369,7 +374,7 @@ bool init_hwtags(void)
  */
 bool init_tags(void) {
 	Tag* tp = NULL;
-	std::string topicPath;
+	std::string strValue;
 	int numTags, iVal, i;
 
 	if (!init_hwtags()) return false;
@@ -382,20 +387,26 @@ bool init_tags(void) {
 	mbWriteTags = new ModbusTag[numTags+1];
 	//printf("%s - %d mqtt tags found\n", __func__, numTags);
 	for (i=0; i < numTags; i++) {
-		if (mqttTagsSettings[i].lookupValue("topic", topicPath)) {
-			tp = ts.addTag(topicPath.c_str());
+		if (mqttTagsSettings[i].lookupValue("topic", strValue)) {
+			tp = ts.addTag(strValue.c_str());
 			tp->setSubscribe();
 			tp->registerCallback(modbus_write_request, i);
-			mbWriteTags[i].setTopic(topicPath.c_str());
+			mbWriteTags[i].setTopic(strValue.c_str());
 			if (mqttTagsSettings[i].lookupValue("slaveid", iVal))
 				mbWriteTags[i].setSlaveId(iVal);
 			if (mqttTagsSettings[i].lookupValue("address", iVal))
 				mbWriteTags[i].setAddress(iVal);
+			if (mqttTagsSettings[i].exists("datatype")) {
+				mqttTagsSettings[i].lookupValue("datatype", strValue);
+				//printf("%s - %s\n", __func__, strValue.c_str());
+				mbWriteTags[i].setDataType(strValue[0]);
+			}
 		}
 	}
 	// Mark end of list
-	mbWriteTags[i].setSlaveId(-1);
+	mbWriteTags[i].setSlaveId(MODBUS_SLAVE_MAX +1);
 	mbWriteTags[i].setUpdateCycleId(-1);
+	//printf("%s - allocated %d tags, last is index %d\n", __func__, i, i-1);
 	return true;
 }
 
@@ -559,18 +570,21 @@ void modbus_write_request(int callbackId, Tag *tag) {
  * Write tag to modbus device
  */
 bool modbus_write_tag(ModbusTag tag) {
-	int rc;
+	int rc = 0;
 	
 	uint8_t slaveId = tag.getSlaveId();
 	if (modbusDebugEnabled)
 		printf ("%s - writing %d to Slave %d Addr %d\n", __func__, tag.getRawValue(),slaveId, tag.getAddress());
 	modbus_set_slave(mb_ctx, slaveId);
-	
-	rc = modbus_write_register(mb_ctx, tag.getAddress(), tag.getRawValue());
+	if (tag.getDataType() == 'r') {
+		rc = modbus_write_register(mb_ctx, tag.getAddress(), tag.getRawValue());
+	} else {
+		rc = modbus_write_bit(mb_ctx, tag.getAddress(), tag.getBoolValue());
+	}
 	if (rc != 1) {
 		if (errno == 110) {		//timeout
 			if (!runningAsDaemon)
-				printf("%s - failed: no response from slave %d (timeout)\n", __func__, slaveId);
+				printf("%s - failed: no response from slave %d addr %d (timeout)\n", __func__, slaveId, tag.getAddress());
 			mbSlaveOnline[slaveId] = false;
 		} 
 		if (errno == 0x6b24250) {	// Illegal Data Address
@@ -796,7 +810,7 @@ bool modbus_config_slaves(Setting& mbSlavesSettings) {
 	}
 	// mark end of array
 	mbReadTags[mbTagCount].setUpdateCycleId(-1);
-	mbReadTags[mbTagCount].setSlaveId(-1);
+	mbReadTags[mbTagCount].setSlaveId(MODBUS_SLAVE_MAX +1);
 	return true;
 }
 

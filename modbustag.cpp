@@ -41,22 +41,23 @@ using namespace std;
 //
 
 ModbusTag::ModbusTag() {
-	this->address = 0;
-	this->topic = "";
-	this->slaveId = 0;
-	this->rawValue = 0;
-	this->multiplier = 1.0;
-	this->offset = 0.0;
-	this->format = "%f";
+	this->_address = 0;
+	this->_topic = "";
+	this->_slaveId = 0;
+	this->_rawValue = 0;
+	this->_multiplier = 1.0;
+	this->_offset = 0.0;
+	this->_format = "%f";
 	this->_noread = 0.0;
 	this->_writePending = false;
-	//printf("%s constructor\n", __func__);
+	this->_dataType = 'r';
+	//printf("%s - constructor %d %s\n", __func__, this->_slaveId, this->_topic.c_str());
 	//throw runtime_error("Class Tag - forbidden constructor");
 }
 
 ModbusTag::ModbusTag(const uint16_t addr) {
-	this->address = addr;
-	this->rawValue = 0;
+	this->_address = addr;
+	this->_rawValue = 0;
 }
 
 ModbusTag::~ModbusTag() {
@@ -66,73 +67,89 @@ ModbusTag::~ModbusTag() {
 
 
 void ModbusTag::setSlaveId(int newId) {
-	slaveId = newId;
+	_slaveId = newId;
 }
 
 uint8_t ModbusTag::getSlaveId(void) {
-	return slaveId;
+	return _slaveId;
 }
 
 void ModbusTag::setAddress(int newAddress) {
-	address = newAddress;
+	_address = newAddress;
 }
 
 uint16_t ModbusTag::getAddress(void) {
-	return address;
+	return _address;
 }
 
 void ModbusTag::setTopic(const char *topicStr) {
 	if (topicStr != NULL) {
-		topic = topicStr;
+		_topic = topicStr;
 	}
 }
 
 const char* ModbusTag::getTopic(void) {
-	return topic.c_str();
+	return _topic.c_str();
 }
 
 std::string ModbusTag::getTopicString(void) {
-	return topic;
+	return _topic;
 }
 
 void ModbusTag::setFormat(const char *formatStr) {
 	if (formatStr != NULL) {
-		format = formatStr;
+		_format = formatStr;
 	}
 }
 
 const char* ModbusTag::getFormat(void) {
-	return format.c_str();
+	return _format.c_str();
 }
 
 void ModbusTag::setRawValue(uint16_t uintValue) {
-	rawValue = uintValue;
+	switch(_dataType) {
+		case 'r':
+			_rawValue = uintValue;
+			break;
+		case 'i':
+		case 'q':
+			if (_rawValue > 0) _rawValue = 1;
+			else _rawValue = 0;
+			break;
+	}
 }
 
 uint16_t ModbusTag::getRawValue(void) {
-	return rawValue;
+	return _rawValue;
+}
+
+uint16_t ModbusTag::getBoolValue(void) {
+	if (_rawValue == 0)
+		return false;
+	else
+		return true;
 }
 
 float ModbusTag::getScaledValue(void) {
-	float fValue = (float) rawValue;
-	fValue *= multiplier;
-	return fValue + offset;
+	float fValue = (float) _rawValue;
+	fValue *= _multiplier;
+	return fValue + _offset;
 }
 
 void ModbusTag::setMultiplier(float newMultiplier) {
-	multiplier = newMultiplier;
+	_multiplier = newMultiplier;
 }
 
 void ModbusTag::setOffset(float newOffset) {
-	offset = newOffset;
+	_offset = newOffset;
 }
 
 void ModbusTag::setUpdateCycleId(int ident) {
-	updatecycle_id = ident;
+	_updatecycle_id = ident;
 }
 
 int ModbusTag::updateCycleId(void) {
-	return updatecycle_id;
+	return _updatecycle_id;
 }
 
 void ModbusTag::setNoreadValue(float newValue) {
@@ -141,6 +158,30 @@ void ModbusTag::setNoreadValue(float newValue) {
 
 float ModbusTag::getNoreadValue(void) {
 	return _noread;
+}
+
+bool ModbusTag::setDataType(char newType) {
+	switch (newType) {
+	case 'i':
+	case 'I':
+		_dataType = 'i';
+		break;
+	case 'q':
+	case 'Q':
+		_dataType = 'q';
+		break;
+	case 'r':
+	case 'R':
+		_dataType = 'r';
+		break;
+	default:
+		return false;
+	}
+	return true;
+}
+
+char ModbusTag::getDataType(void) {
+	return _dataType;
 }
 
 void ModbusTag::setWritePending(bool newValue) {

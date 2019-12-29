@@ -70,6 +70,12 @@ public:
 	uint16_t getRawValue(void);
 
 	/**
+	* Get value as bool
+	* @return false if _rawValue is 0, otherwise true
+	*/
+	uint16_t getBoolValue(void);
+
+	/**
 	* Get scaled value
 	* @return scaled value as float
 	*/
@@ -136,6 +142,16 @@ public:
 	float getNoreadValue(void);
 	
 	/**
+	 * Set data type
+	 */
+	bool setDataType(char);
+	
+	/**
+	 * Get data type
+	 */
+	char getDataType(void);
+	
+	/**
 	 * Set write pending
 	 * to indicate that value needs to be written to the slave
 	 */
@@ -155,17 +171,18 @@ public:
 private:
 	// All properties of this class are private
 	// Use setters & getters to access these values
-	std::string topic;				// storage for topic path
-	std::string format;				// storage for publish format
+	std::string _topic;				// storage for topic path
+	std::string _format;				// storage for publish format
 	bool _writePending;				// value needs to be written to slave
-	float multiplier;				// multiplier for scaled value
-	float offset;					// offset for scaled value
+	float _multiplier;				// multiplier for scaled value
+	float _offset;					// offset for scaled value
 	float _noread;					// value to publish when read fails
-	uint8_t	slaveId;				// modbus address of slave
-	uint16_t address;				// the address of the modbus tag in the slave
-	uint16_t rawValue;					// the value of this modbus tag
-	int updatecycle_id;				// update cycle identifier
-	time_t lastUpdateTime;			// last update time (change of value)
+	uint8_t	_slaveId;				// modbus address of slave
+	uint16_t _address;				// the address of the modbus tag in the slave
+	uint16_t _rawValue;					// the value of this modbus tag
+	int _updatecycle_id;				// update cycle identifier
+	time_t _lastUpdateTime;			// last update time (change of value)
+	char _dataType;					// i = input, q = output, r = register
 };
 
 
