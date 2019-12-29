@@ -50,9 +50,10 @@ const int version_minor = 0;
 
 #define MQTT_BROKER_DEFAULT "127.0.0.1"
 
-std::string cpu_temp_topic = "";
+static string cpu_temp_topic = "";
 static string cfgFileName;
 static string execName;
+static string mbSlaveStatusTopic;
 bool exitSignal = false;
 bool debugEnabled = false;
 bool modbusDebugEnabled = false;
@@ -551,6 +552,28 @@ void mqtt_clear_tags(bool publish_noread = true, bool clear_retain = true) {
 }
 
 #pragma mark Modbus
+
+/**
+ * Set and report slave online status to mqtt broker
+ * @param slaveId: slave id to be changed
+ * @param newStatus: true for online, false for offline
+ * @param forceReport: publish report even if the status hasn't changed
+ */
+void modbus_slave_set_online_status (int slaveId, bool newStatus, bool forceReport = false) {
+	string topic = mbSlaveStatusTopic;
+	// range check on slaveId
+	if ((slaveId > MODBUS_SLAVE_MAX) || (slaveId < MODBUS_SLAVE_MIN)) return;
+	//printf("%s - %d: %d old(%d)\n", __func__, slaveId, newStatus, mbSlaveOnline[slaveId]);
+	// report only if the status has changed or on forced report
+	if ( (mbSlaveOnline[slaveId] != newStatus) || (forceReport)) {
+		mbSlaveOnline[slaveId] = newStatus;
+		if (!topic.empty()) {
+			topic = topic.append(std::to_string(slaveId));
+			printf("%s - topic= %s value=%d\n", __func__, topic.c_str(), mbSlaveOnline[slaveId]);
+		}
+	}
+}
+
 /**
  * Modbus write request
  * This a callback function from Tag class
@@ -583,9 +606,10 @@ bool modbus_write_tag(ModbusTag tag) {
 	}
 	if (rc != 1) {
 		if (errno == 110) {		//timeout
-			if (!runningAsDaemon)
-				printf("%s - failed: no response from slave %d addr %d (timeout)\n", __func__, slaveId, tag.getAddress());
-			mbSlaveOnline[slaveId] = false;
+			if (!runningAsDaemon) {
+				printf("%s - failed: no response from slave %d addr %d (timeout)\n", __func__, slaveId, tag.getAddress()); 
+				}
+			modbus_slave_set_online_status(slaveId, false);
 		} 
 		if (errno == 0x6b24250) {	// Illegal Data Address
 			if (!runningAsDaemon)
@@ -595,7 +619,7 @@ bool modbus_write_tag(ModbusTag tag) {
 		return false;
 	} else {
 		// successful read
-		mbSlaveOnline[slaveId] = true;
+		modbus_slave_set_online_status(slaveId, true);
 		if (modbusDebugEnabled) 
 			printf("%s - write success, value = %d [0x%04x]\n", __func__, tag.getRawValue(), tag.getRawValue());
 	}
@@ -620,7 +644,7 @@ bool modbus_read_tag(ModbusTag tag) {
 		if (errno == 110) {		//timeout
 			if (!runningAsDaemon)
 				printf("%s - failed: no response from slave %d (timeout)\n", __func__, slaveId);
-			mbSlaveOnline[slaveId] = false;
+			modbus_slave_set_online_status(slaveId, false);
 		} 
 		if (errno == 0x6b24250) {	// Illegal Data Address
 			if (!runningAsDaemon)
@@ -631,7 +655,7 @@ bool modbus_read_tag(ModbusTag tag) {
 		return false;
 	} else {
 		// successful read
-		mbSlaveOnline[slaveId] = true;
+		modbus_slave_set_online_status(slaveId, true);
 		tag.setRawValue(registers[0]);
 		if (modbusDebugEnabled) 
 			printf("%s - reading success, value = %d [0x%04x]\n", __func__, registers[0], registers[0]);
@@ -898,6 +922,7 @@ bool init_modbus()
 {
 	//char str[256];
 	string rtu_port;
+	string strValue;
 	int port_baud = 9600;
 	uint32_t response_to_sec = 0;
 	uint32_t response_to_usec = 0;
@@ -927,7 +952,12 @@ bool init_modbus()
 		if (modbusDebugEnabled)
 			printf("%s - Modbus Debug Enabled\n", __func__);
 	}
-
+	
+	// set slave status reporting topic
+	if (cfg.lookupValue("modbusrtu.slavestatustopic", strValue)) {
+		mbSlaveStatusTopic = strValue;
+		//printf("%s - mbSlaveStatusTopic: %s\n", __func__, mbSlaveStatusTopic.c_str());
+	}
 	// set new response timeout if configured
 	if (cfg_get_int("modbusrtu.responsetimeout_us", newValue)) {
 		response_to_usec = newValue;
@@ -963,7 +993,7 @@ bool init_modbus()
 	if (!modbus_config()) return false;
 	if (!modbus_assign_updatecycles()) return false;
 	
-	// set all slave to offline
+	// all slaves start life in offline mode
 	for (int i=0; i <= MODBUS_SLAVE_MAX; i++)
 		mbSlaveOnline[i] = false;
 	
@@ -996,6 +1026,15 @@ void setMainLoopInterval(int newValue)
 void exit_loop(void) 
 {
 	bool bValue, clearonexit = false, noreadonexit = false;
+	
+	// set all modbus slaves as offline and publish new status
+	for (int i=0; i <= MODBUS_SLAVE_MAX; i++) {
+		// only if they are online, no change if they are already offline
+		if (mbSlaveOnline[i]) {
+			modbus_slave_set_online_status(i, false);
+		}
+	}
+	
 	// close modbus device
 	if (mb_ctx != NULL) {
 		modbus_close(mb_ctx);
