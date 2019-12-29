@@ -563,7 +563,7 @@ void modbus_write_request(int callbackId, Tag *tag) {
 	mbWriteTags[callbackId].setRawValue(tag->intValue());
 	// set write request on tag
 	mbWriteTags[callbackId].setWritePending(true);			
-	//printf("%s - %s is %d\n", __func__, tag->getTopic(), mbWriteTags[callbackId].getRawValue());
+	//printf("%s - %s is %d (%d)\n", __func__, tag->getTopic(), mbWriteTags[callbackId].getRawValue(),tag->intValue());
 }
 
 /**

@@ -113,7 +113,7 @@ void ModbusTag::setRawValue(uint16_t uintValue) {
 			break;
 		case 'i':
 		case 'q':
-			if (_rawValue > 0) _rawValue = 1;
+			if (uintValue > 0) _rawValue = 1;
 			else _rawValue = 0;
 			break;
 	}
