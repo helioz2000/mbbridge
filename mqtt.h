@@ -111,6 +111,12 @@ public:
      */
     int publish(const char* topic, const char* format, float value);
 
+	/**
+	 * Clear retained message from mosquitto persistance store
+	 * @param topic: the topic name to be cleared
+	 */
+	int clear_retained_message(const char* topic);
+
     /**
      * subscribe to a topic
      * @param topic: topic string
@@ -150,6 +156,18 @@ public:
      */
     bool isConnected(void);
 
+	/**
+	 * set mqtt retain
+	 * @param newRetain: new retain value
+	 * @return: 0 on success, negative number for error
+	 */
+	int setRetain(bool);
+	
+	/**
+	 * get MQTT retain value
+	 * @returns: current retain value as bool
+	 */
+	bool getRetain(void);
 
 private:
     void (*connectionStatusCallback) (bool);     // callback for connection status change
@@ -166,7 +184,7 @@ private:
     bool _console_log_enable;    // for mosqitto logging
 
     int _qos;        // quality of service [0..2]
-    bool _retain;    // reained message (last known value)
+    bool _retain;    // retain setting for publish commands
 };
 
 #endif /* HARDWARE_H */

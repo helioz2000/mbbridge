@@ -125,6 +125,27 @@ public:
 	*/
 	void setOffset(float);
 	
+	/**
+	* Set noread
+	*/
+	void setNoreadValue(float);
+	
+	/**
+	 * Get noread
+	*/
+	float getNoreadValue(void);
+	
+	/**
+	 * Set write pending
+	 * to indicate that value needs to be written to the slave
+	 */
+	void setWritePending(bool);
+	
+	/**
+	 * Get write pending
+	 */
+	bool getWritePending(void);
+	
 	// public members used to store data which is not used inside this class
 	//int readInterval;                   // seconds between reads
 	//time_t nextReadTime;                // next scheduled read
@@ -136,8 +157,10 @@ private:
 	// Use setters & getters to access these values
 	std::string topic;				// storage for topic path
 	std::string format;				// storage for publish format
+	bool _writePending;				// value needs to be written to slave
 	float multiplier;				// multiplier for scaled value
 	float offset;					// offset for scaled value
+	float _noread;					// value to publish when read fails
 	uint8_t	slaveId;				// modbus address of slave
 	uint16_t address;				// the address of the modbus tag in the slave
 	uint16_t rawValue;					// the value of this modbus tag

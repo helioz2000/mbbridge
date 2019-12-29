@@ -149,9 +149,7 @@ static void on_subscribe(struct mosquitto *mosq, void *obj, int mid, int qos_cou
      mosquitto_lib_cleanup();
  }
 
-void MQTT::setConsoleLog(bool enable) {
-    _console_log_enable = enable;
-}
+#pragma mark Connecting
 
 void MQTT::connect(void) {
     char strbuf[255];
@@ -168,6 +166,8 @@ void MQTT::connect(void) {
 void MQTT::disconnect(void) {
     if (_connected) mosquitto_disconnect(_mosq) ;
 }
+
+#pragma mark Operation
 
 void MQTT::registerConnectionCallback(void (*callback) (bool)) {
     connectionStatusCallback = callback;
@@ -188,6 +188,23 @@ int MQTT::publish(const char* topic, const char* format, float value) {
     sprintf(_pub_buf, format, value);
     //printf ("%s: %s %s\n", __func__, topic, pub_buf);
     int result = mosquitto_publish(_mosq, &messageid, topic, strlen(_pub_buf), (const char *) _pub_buf, _qos, _retain);
+    if (result != MOSQ_ERR_SUCCESS) {
+        fprintf(stderr, "%s: %s [%s]\n", __func__, mosquitto_strerror(result), topic);
+    }
+    return messageid;
+}
+
+int MQTT::clear_retained_message(const char* topic) {
+    int messageid = 0;
+    if (!_connected) {
+        fprintf(stderr, "%s: Not Connected!\n", __func__);
+        return -1;
+    } else {
+        //printf ("%s: %s\n", __func__, topic);
+    }
+	// publishing an empty message with retain on will clear the message from 
+	// mosquitto's persistance store
+    int result = mosquitto_publish(_mosq, &messageid, topic, 0, "", _qos, true);
     if (result != MOSQ_ERR_SUCCESS) {
         fprintf(stderr, "%s: %s [%s]\n", __func__, mosquitto_strerror(result), topic);
     }
@@ -215,6 +232,12 @@ int MQTT::unsubscribe(const char *topic) {
     return messageid;
 }
 
+#pragma mark Setters and Getters
+
+void MQTT::setConsoleLog(bool enable) {
+    _console_log_enable = enable;
+}
+
 int MQTT::setBroker(const char *newBroker) {
     _mqttBroker = newBroker;
     return 0;
@@ -232,18 +255,33 @@ bool MQTT::isConnected(void) {
     return _connected;
 }
 
+int MQTT::setRetain(bool newRetain) {
+	_retain = newRetain;
+	return 0;
+}
+
+bool MQTT::getRetain(void) {
+	return _retain;
+}
+
+#pragma mark Callbacks
+
 void MQTT::message_callback(struct mosquitto *m, const struct mosquitto_message *message) {
-    //fprintf(stderr, "%s:\n", __func__);
-    /*
-    if(message->payloadlen){
+	//fprintf(stderr, "%s:\n", __func__);
+	/*
+	if(message->payloadlen){
 		fprintf(stderr, "%s %s\n", message->topic, (const char *)message->payload);
 	}else{
 		fprintf(stderr, "%s (null)\n", message->topic);
 	}
-    */
-    if (topicUpdateCallback != NULL) {
-        (*topicUpdateCallback) (message->topic, (const char *)message->payload);
-    }
+	*/
+	if (topicUpdateCallback != NULL) {
+		(*topicUpdateCallback) (message->topic, (const char *)message->payload);
+		//fprintf(stderr, "%s - topicUpdateCallback done\n", __func__);
+	}
+//	else {
+//		fprintf(stderr, "%s - topicUpdateCallback is NULL\n", __func__);
+//	}
 }
 
 void MQTT::log_callback(struct mosquitto *m, int level, const char *str) {

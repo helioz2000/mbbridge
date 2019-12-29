@@ -48,6 +48,8 @@ ModbusTag::ModbusTag() {
 	this->multiplier = 1.0;
 	this->offset = 0.0;
 	this->format = "%f";
+	this->_noread = 0.0;
+	this->_writePending = false;
 	//printf("%s constructor\n", __func__);
 	//throw runtime_error("Class Tag - forbidden constructor");
 }
@@ -133,3 +135,18 @@ int ModbusTag::updateCycleId(void) {
 	return updatecycle_id;
 }
 
+void ModbusTag::setNoreadValue(float newValue) {
+	_noread = newValue;
+}
+
+float ModbusTag::getNoreadValue(void) {
+	return _noread;
+}
+
+void ModbusTag::setWritePending(bool newValue) {
+	_writePending = newValue;
+}
+	
+bool ModbusTag::getWritePending(void) {
+	return _writePending;
+}

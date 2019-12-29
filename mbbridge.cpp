@@ -1,6 +1,8 @@
 /**
  * @file mbbridge.cpp
  *
+ * https://github.com/helioz2000/mbbridge
+ *
  * Author: Erwin Bejsta
  * December 2019
  */
@@ -36,6 +38,10 @@
 using namespace std;
 using namespace libconfig;
 
+const char *build_date_str = __DATE__ " " __TIME__;
+const int version_major = 1;
+const int version_minor = 0;
+
 #define CFG_FILENAME_EXT ".cfg"
 #define CFG_DEFAULT_FILEPATH "/etc/"
 
@@ -45,8 +51,6 @@ using namespace libconfig;
 #define MQTT_BROKER_DEFAULT "127.0.0.1"
 
 std::string cpu_temp_topic = "";
-
-const char *build_date_str = __DATE__ " " __TIME__;
 static string cfgFileName;
 static string execName;
 bool exitSignal = false;
@@ -56,14 +60,16 @@ bool mqttDebugEnabled = false;
 bool runningAsDaemon = false;
 time_t mqtt_connect_time = 0;   // time the connection was initiated
 bool mqtt_connection_in_progress = false;
+bool mqtt_retain = false;
 std::string processName;
 char *info_label_text;
 useconds_t mainloopinterval = 250;   // milli seconds
 //extern void cpuTempUpdate(int x, Tag* t);
 //extern void roomTempUpdate(int x, Tag* t);
 modbus_t *mb_ctx = NULL;
-updatecycle * updateCycles = NULL;	// array of update cycle definitions
-ModbusTag * mbTags = NULL;			// array of all modbus tags
+updatecycle *updateCycles = NULL;	// array of update cycle definitions
+ModbusTag *mbReadTags = NULL;			// array of all modbus read tags
+ModbusTag *mbWriteTags = NULL;			// array of all modbus write tags
 int mbTagCount = -1;
 #define MODBUS_SLAVE_MAX 254
 bool mbSlaveOnline[MODBUS_SLAVE_MAX+1];			// array to store online/offline status
@@ -71,9 +77,12 @@ bool mbSlaveOnline[MODBUS_SLAVE_MAX+1];			// array to store online/offline statu
 #pragma mark Proto types
 void subscribe_tags(void);
 void mqtt_connection_status(bool status);
-void mqtt_topic_update(const char *topic, const char *value);
+void mqtt_topic_update(const char* topic, const char* value);
+void mqtt_subscribe_tags(void);
 void setMainLoopInterval(int newValue);
 bool modbus_read_tag(ModbusTag tag);
+bool modbus_write_tag(ModbusTag tag);
+void modbus_write_request(int callbackId, Tag *tag);
 
 TagStore ts;
 MQTT mqtt;
@@ -130,7 +139,6 @@ void timespec_diff(struct timespec *start, struct timespec *stop, struct timespe
 #pragma mark -- Config File functions
 
 /** Read configuration file.
- * @param
  * @return true if success
  */
 bool readConfig (void)
@@ -147,7 +155,7 @@ bool readConfig (void)
 		std::cerr << "I/O error while reading file <" << cfgFileName << ">." << std::endl;
 		return false;
 	}
-		catch(const ParseException &pex)
+	catch(const ParseException &pex)
 	{
 		std::cerr << "Parse error at " << pex.getFile() << ":" << pex.getLine()
 				<< " - " << pex.getError() << std::endl;
@@ -166,6 +174,7 @@ bool readConfig (void)
 		return false;
 	}
 
+	// Read MQTT broker from config
 	try {
 		mqtt.setBroker(cfg.lookup("mqtt.broker"));
 	} catch (const SettingNotFoundException &excp) {
@@ -202,11 +211,11 @@ bool cfg_get_str(const std::string &path, std::string &value) {
 #pragma mark -- Processing
 
 /**
- * Process variables
+ * Process internal variables
  * Local variables are processed at a fixed time interval
  * The processing involves reading value from hardware and
  * publishing the value to MQTT broker
- * @returns true if one or more variable were processed
+ * @returns true if one or more variable(s) were processed
  */
 bool var_process(void) {
     bool retval = false;
@@ -239,11 +248,29 @@ bool var_process(void) {
     return retval;
 }
 
-/*
- * process modbus cyclic update
- * @returns false is there was nothing to process, otherwise true
+/**
+ * process modbus write
+ * only one write function is processed per call
+ * @return false is there was nothing to process, otherwise true
  */
-bool modbus_process() {
+bool modbus_write_process() {
+	int idx = 0;
+	while (mbWriteTags[idx].getSlaveId() > 0) {
+		if (mbWriteTags[idx].getWritePending()) {
+			//printf ("%s - writing %d to Slave %d Addr %d\n", __func__, mbWriteTags[idx].getRawValue(),mbWriteTags[idx].getSlaveId(), mbWriteTags[idx].getAddress());
+			modbus_write_tag(mbWriteTags[idx]);
+			mbWriteTags[idx].setWritePending(false);	// mark as write done
+			return true;			// end here, we only do one write
+			}
+		idx++;
+	}
+	return false;
+}
+/**
+ * process modbus cyclic read update
+ * @return false is there was nothing to process, otherwise true
+ */
+bool modbus_read_process() {
 	int index = 0;
 	int tagIndex = 0;
 	int *tagArray;
@@ -262,7 +289,7 @@ bool modbus_process() {
 			// read each tag in the array
 			tagIndex = 0;
 			while (tagArray[tagIndex] >= 0) {
-				modbus_read_tag(mbTags[tagArray[tagIndex]]);
+				modbus_read_tag(mbReadTags[tagArray[tagIndex]]);
 				tagIndex++;
 			}
 			retval = true;
@@ -276,11 +303,14 @@ bool modbus_process() {
 
 /** Process all  variables
  * @return true if at least one variable was processed
+ * Note: the return value from this function is used 
+ * to measure processing time
  */
 bool process() {
 	bool retval = false;
-	if (modbus_process()) retval = true;
-	if (var_process()) retval = true;
+	if (modbus_read_process()) retval = true;
+	if (modbus_write_process()) retval = true;
+	var_process();	// don't want it in time measuring, doesn't take up much time
 	return retval;
 }
 
@@ -306,16 +336,18 @@ bool init_values(void)
 
 #pragma mark MQTT
 
-/** Initialise the tag database (tagstore)
+
+
+/** Initialise hardware tags
  * @return false on failure
  */
-bool init_tags(void)
+bool init_hwtags(void)
 {
 
 	Tag* tp = NULL;
 	std::string topicPath;
 
-	// CPU temperature
+	// CPU temperature (optional, may not exist)
 	if (cfg.lookupValue("cputemp.topic", topicPath)) {
 		cpu_temp_topic = topicPath;
 		tp = ts.addTag(topicPath.c_str());
@@ -329,6 +361,41 @@ bool init_tags(void)
 			tp->nextPublishTime = time(NULL) + tp->publishInterval;
 		}
 	}
+	return true;
+}
+
+/** Initialise the tag database (tagstore)
+ * @return false on failure
+ */
+bool init_tags(void) {
+	Tag* tp = NULL;
+	std::string topicPath;
+	int numTags, iVal, i;
+
+	if (!init_hwtags()) return false;
+	if (!cfg.exists("mqtt_tags")) {	// optional
+		log(LOG_NOTICE,"configuration - parameter \"mqtt_tags\" does not exist");
+		return true;
+		}
+	Setting& mqttTagsSettings = cfg.lookup("mqtt_tags");
+	numTags = mqttTagsSettings.getLength();
+	mbWriteTags = new ModbusTag[numTags+1];
+	//printf("%s - %d mqtt tags found\n", __func__, numTags);
+	for (i=0; i < numTags; i++) {
+		if (mqttTagsSettings[i].lookupValue("topic", topicPath)) {
+			tp = ts.addTag(topicPath.c_str());
+			tp->setSubscribe();
+			tp->registerCallback(modbus_write_request, i);
+			mbWriteTags[i].setTopic(topicPath.c_str());
+			if (mqttTagsSettings[i].lookupValue("slaveid", iVal))
+				mbWriteTags[i].setSlaveId(iVal);
+			if (mqttTagsSettings[i].lookupValue("address", iVal))
+				mbWriteTags[i].setAddress(iVal);
+		}
+	}
+	// Mark end of list
+	mbWriteTags[i].setSlaveId(-1);
+	mbWriteTags[i].setUpdateCycleId(-1);
 	return true;
 }
 
@@ -353,6 +420,8 @@ bool mqtt_init(void) {
 			if (mqttDebugEnabled) printf("%s - mqtt debug enabled\n", __func__);
 		}
 	}
+	if (cfg.lookupValue("mqtt.retain", bValue))
+		mqtt_retain = bValue;
 	mqtt.registerConnectionCallback(mqtt_connection_status);
 	mqtt.registerTopicUpdateCallback(mqtt_topic_update);
 	mqtt_connect();
@@ -363,12 +432,12 @@ bool mqtt_init(void) {
  * Subscribe tags to MQTT broker
  * Iterate over tag store and process every "subscribe" tag
  */
-void subscribe_tags(void) {
+void mqtt_subscribe_tags(void) {
 	//printf("%s - Start\n", __func__);
 	Tag* tp = ts.getFirstTag();
 	while (tp != NULL) {
 		if (tp->isSubscribe()) {
-		//printf("%s: %s\n", __func__, tp->getTopic());
+			//printf("%s: %s\n", __func__, tp->getTopic());
 			mqtt.subscribe(tp->getTopic());
 		}
 		tp = ts.getNextTag();
@@ -387,7 +456,8 @@ void mqtt_connection_status(bool status) {
 	if (status) {
 		log(LOG_INFO, "Connected to MQTT broker [%s]", mqtt.broker());
 		mqtt_connection_in_progress = false;
-		subscribe_tags();
+		mqtt.setRetain(mqtt_retain);
+		mqtt_subscribe_tags();
 	} else {
 		if (mqtt_connection_in_progress) {
 			mqtt.disconnect();
@@ -405,34 +475,121 @@ void mqtt_connection_status(bool status) {
 /**
  * callback function for MQTT
  * MQTT notifies when a subscribed topic has received an update
- *
+ * @param topic: topic string
+ * @param value: value as a string
  * Note: do not store the pointers "topic" & "value", they will be
  * destroyed after this function returns
  */
-void mqtt_topic_update(const char *topic, const char *value) {
+void mqtt_topic_update(const char* topic, const char* value) {
 	//printf("%s - %s %s\n", __func__, topic, value);
 	Tag *tp = ts.getTag(topic);
 	if (tp == NULL) {
 		fprintf(stderr, "%s: <%s> not  in ts\n", __func__, topic);
 		return;
 	}
-	tp->setValue(value);
+	tp->setValue(value);	// This will trigger a callback to modbus_write_request
 }
 
 /**
  * Publish tag to MQTT
+ * @param tag: ModbusTag to publish
+ * @param noread: publish the "noread" value (for failed read)
  */
-bool mqtt_publish_tag(ModbusTag tag) {
+bool mqtt_publish_tag(ModbusTag tag, bool noread = false) {
 	if (!mqtt.isConnected()) return false;
 	if (tag.getTopicString().empty()) return true;	// don't publish if topic is empty
-	mqtt.publish(tag.getTopic(), tag.getFormat(), tag.getScaledValue());
+	if (noread) {
+		mqtt.publish(tag.getTopic(), tag.getFormat(), tag.getNoreadValue());
+	} else {
+		mqtt.publish(tag.getTopic(), tag.getFormat(), tag.getScaledValue());
+	}
 	return true;
 }
 
+/**
+ * Publish noread value to all tags (normally done on program exit)
+ * @param publish_noread: publish the "noread" value of the tag
+ * @param clear_retain: clear retained value from broker's persistance store
+ */
+void mqtt_clear_tags(bool publish_noread = true, bool clear_retain = true) {
+	int index = 0, tagIndex = 0;
+	int *tagArray;
+	ModbusTag mbTag;
+	//printf("%s", __func__);
+	
+	//mqtt.setRetain(false);
+	while (updateCycles[index].ident >= 0) {
+		// ignore if cycle has no tags to process
+		if (updateCycles[index].tagArray == NULL) {
+			index++; continue;
+		}
+		// get array for tags
+		tagArray = updateCycles[index].tagArray;
+		// read each tag in the array
+		tagIndex = 0;
+		while (tagArray[tagIndex] >= 0) {
+			mbTag = mbReadTags[tagArray[tagIndex]];
+			if (publish_noread)
+				mqtt_publish_tag(mbTag, true);			// publish noread value
+			if (clear_retain)
+				mqtt.clear_retained_message(mbTag.getTopic());	// clear retained status
+			tagIndex++;
+		}
+		index++;
+	}
+}
+
 #pragma mark Modbus
+/**
+ * Modbus write request
+ * This a callback function from Tag class
+ * it is executed when the value of tag is assigned
+ * that is, when it's published by the broker
+ * the request is added to the list of write requests
+ */
+void modbus_write_request(int callbackId, Tag *tag) {
+	// update value in tag array
+	mbWriteTags[callbackId].setRawValue(tag->intValue());
+	// set write request on tag
+	mbWriteTags[callbackId].setWritePending(true);			
+	//printf("%s - %s is %d\n", __func__, tag->getTopic(), mbWriteTags[callbackId].getRawValue());
+}
 
 /**
- * Read tag from modbus
+ * Write tag to modbus device
+ */
+bool modbus_write_tag(ModbusTag tag) {
+	int rc;
+	
+	uint8_t slaveId = tag.getSlaveId();
+	if (modbusDebugEnabled)
+		printf ("%s - writing %d to Slave %d Addr %d\n", __func__, tag.getRawValue(),slaveId, tag.getAddress());
+	modbus_set_slave(mb_ctx, slaveId);
+	
+	rc = modbus_write_register(mb_ctx, tag.getAddress(), tag.getRawValue());
+	if (rc != 1) {
+		if (errno == 110) {		//timeout
+			if (!runningAsDaemon)
+				printf("%s - failed: no response from slave %d (timeout)\n", __func__, slaveId);
+			mbSlaveOnline[slaveId] = false;
+		} 
+		if (errno == 0x6b24250) {	// Illegal Data Address
+			if (!runningAsDaemon)
+				printf("%s - failed: illegal data address %d on slave %d\n", __func__, tag.getAddress(), slaveId);
+		}
+		log(LOG_ERR, "Modbus Write failed (%x): %s", errno, modbus_strerror(errno));
+		return false;
+	} else {
+		// successful read
+		mbSlaveOnline[slaveId] = true;
+		if (modbusDebugEnabled) 
+			printf("%s - write success, value = %d [0x%04x]\n", __func__, tag.getRawValue(), tag.getRawValue());
+	}
+	return true;
+}
+
+/**
+ * Read tag from modbus device
  */
 bool modbus_read_tag(ModbusTag tag) {
 	uint16_t registers[4];
@@ -450,14 +607,14 @@ bool modbus_read_tag(ModbusTag tag) {
 			if (!runningAsDaemon)
 				printf("%s - failed: no response from slave %d (timeout)\n", __func__, slaveId);
 			mbSlaveOnline[slaveId] = false;
-			return false;
 		} 
 		if (errno == 0x6b24250) {	// Illegal Data Address
 			if (!runningAsDaemon)
 				printf("%s - failed: illegal data address %d on slave %d\n", __func__, tag.getAddress(), slaveId);
-			return false;
 		}
 		log(LOG_ERR, "Modbus Read failed (%x): %s", errno, modbus_strerror(errno));
+		mqtt_publish_tag(tag, true);	// publish noread value for failed read
+		return false;
 	} else {
 		// successful read
 		mbSlaveOnline[slaveId] = true;
@@ -468,7 +625,6 @@ bool modbus_read_tag(ModbusTag tag) {
 	}
 	return true;
 }
-
 
 /**
  * assign tags to update cycles
@@ -492,14 +648,14 @@ bool modbus_assign_updatecycles () {
 		cycleIdent = updateCycles[updidx].ident;
 		updateCycles[updidx].tagArray = NULL;
 		updateCycles[updidx].tagArraySize = 0;
-		// iterate over mbTags array
+		// iterate over mbReadTags array
 		mbTagIdx = 0;
 		matchCount = 0;
-		while (mbTags[mbTagIdx].updateCycleId() >= 0) {
+		while (mbReadTags[mbTagIdx].updateCycleId() >= 0) {
 			// count tags with cycle id match
-			if (mbTags[mbTagIdx].updateCycleId() == cycleIdent) {
+			if (mbReadTags[mbTagIdx].updateCycleId() == cycleIdent) {
 				matchCount++;
-				//cout << cycleIdent <<" " << mbTags[mbTagIdx].getAddress() << endl;
+				//cout << cycleIdent <<" " << mbReadTags[mbTagIdx].getAddress() << endl;
 			}
 			mbTagIdx++;
 		}
@@ -514,9 +670,9 @@ bool modbus_assign_updatecycles () {
 		// fill array with matching tag indexes
 		mbTagIdx = 0;
 		arIndex = 0;
-		while (mbTags[mbTagIdx].updateCycleId() >= 0) {
+		while (mbReadTags[mbTagIdx].updateCycleId() >= 0) {
 			// count tags with cycle id match
-			if (mbTags[mbTagIdx].updateCycleId() == cycleIdent) {
+			if (mbReadTags[mbTagIdx].updateCycleId() == cycleIdent) {
 				intArray[arIndex] = mbTagIdx;
 				arIndex++;
 			}
@@ -551,23 +707,25 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 	
 	for (tagIndex = 0; tagIndex < numTags; tagIndex++) {
 		if (mbTagsSettings[tagIndex].lookupValue("address", tagAddress)) {
-			mbTags[mbTagCount].setAddress(tagAddress);
-			mbTags[mbTagCount].setSlaveId(slaveId);
+			mbReadTags[mbTagCount].setAddress(tagAddress);
+			mbReadTags[mbTagCount].setSlaveId(slaveId);
 		} else {
 			log(LOG_WARNING, "Error in config file, tag address missing");
 			continue;		// skip to next tag
 		}
 		if (mbTagsSettings[tagIndex].lookupValue("update_cycle", tagUpdateCycle)) {
-			mbTags[mbTagCount].setUpdateCycleId(tagUpdateCycle);
+			mbReadTags[mbTagCount].setUpdateCycleId(tagUpdateCycle);
 		}
 		if (mbTagsSettings[tagIndex].lookupValue("topic", strValue)) {
-			mbTags[mbTagCount].setTopic(strValue.c_str());
+			mbReadTags[mbTagCount].setTopic(strValue.c_str());
 			if (mbTagsSettings[tagIndex].lookupValue("format", strValue))
-				mbTags[mbTagCount].setFormat(strValue.c_str());
+				mbReadTags[mbTagCount].setFormat(strValue.c_str());
 			if (mbTagsSettings[tagIndex].lookupValue("multiplier", fValue))
-				mbTags[mbTagCount].setMultiplier(fValue);
+				mbReadTags[mbTagCount].setMultiplier(fValue);
 			if (mbTagsSettings[tagIndex].lookupValue("offset", fValue))
-				mbTags[mbTagCount].setOffset(fValue);
+				mbReadTags[mbTagCount].setOffset(fValue);
+			if (mbTagsSettings[tagIndex].lookupValue("noread", fValue))
+				mbReadTags[mbTagCount].setNoreadValue(fValue);
 		}
 		mbTagCount++;
 		//cout << "Tag " << mbTagCount << " addr: " << tagAddress << " cycle: " << tagUpdateCycle << " Topic: " << tagTopic << endl;
@@ -605,7 +763,7 @@ bool modbus_config_slaves(Setting& mbSlavesSettings) {
 		}
 	}
 	
-	mbTags = new ModbusTag[numTags+1];
+	mbReadTags = new ModbusTag[numTags+1];
 	
 	mbTagCount = 0;
 	// iterate through slaves
@@ -637,8 +795,8 @@ bool modbus_config_slaves(Setting& mbSlavesSettings) {
 		}
 	}
 	// mark end of array
-	mbTags[mbTagCount].setUpdateCycleId(-1);
-	
+	mbReadTags[mbTagCount].setUpdateCycleId(-1);
+	mbReadTags[mbTagCount].setSlaveId(-1);
 	return true;
 }
 
@@ -821,8 +979,9 @@ void setMainLoopInterval(int newValue)
 /** 
  * called on program exit
  */
-void exit_loop(void)
+void exit_loop(void) 
 {
+	bool bValue, clearonexit = false, noreadonexit = false;
 	// close modbus device
 	if (mb_ctx != NULL) {
 		modbus_close(mb_ctx);
@@ -830,6 +989,16 @@ void exit_loop(void)
 		mb_ctx = NULL;
 		cout << "Modbus closed" << endl;
 	}
+	
+	// how to handle mqtt broker published tags 
+	// clear retain status for all tags?
+	if (cfg.lookupValue("mqtt.clearonexit", bValue))
+		clearonexit = bValue;
+	// publish noread value for all tags?
+	if (cfg.lookupValue("mqtt.noreadonexit", bValue)) 
+		noreadonexit = bValue;
+	if (noreadonexit || clearonexit)
+		mqtt_clear_tags(noreadonexit, clearonexit);
 	// free allocated memory
 	// arrays of tags in cycleupdates
 	int *ar, idx=0;
@@ -840,8 +1009,9 @@ void exit_loop(void)
 	}
 	
 	delete [] updateCycles;
-	delete [] mbTags;
-	}
+	delete [] mbWriteTags;
+	delete [] mbReadTags;
+}
 
 /** Main program loop
  */
@@ -956,6 +1126,7 @@ int main (int argc, char *argv[])
 	if (! parseArguments(argc, argv) ) goto exit_fail;
 
 	log(LOG_INFO,"[%s] PID: %d PPID: %d", argv[0], getpid(), getppid());
+	log(LOG_INFO,"Version %d.%02d [%s] ", version_major, version_minor, build_date_str);
 
 	signal (SIGINT, sigHandler);
 	//signal (SIGHUP, sigHandler);
