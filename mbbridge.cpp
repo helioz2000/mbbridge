@@ -569,7 +569,12 @@ void modbus_slave_set_online_status (int slaveId, bool newStatus, bool forceRepo
 		mbSlaveOnline[slaveId] = newStatus;
 		if (!topic.empty()) {
 			topic = topic.append(std::to_string(slaveId));
-			printf("%s - topic= %s value=%d\n", __func__, topic.c_str(), mbSlaveOnline[slaveId]);
+			//printf("%s - topic= %s value=%d\n", __func__, topic.c_str(), mbSlaveOnline[slaveId]);
+			if (mbSlaveOnline[slaveId]) {
+				mqtt.publish(topic.c_str(), "%.0f", 1);
+			} else {
+				mqtt.publish(topic.c_str(), "%.0f", 0);
+			}
 		}
 	}
 }
