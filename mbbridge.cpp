@@ -284,23 +284,44 @@ bool modbus_write_process() {
  */
 bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	ModbusTag t = mbReadTags[tagArray[arrayIndex]];
+	ModbusTag tag;
 	int group = t.getGroup();
+	int slaveId, addr, addrLo=99999, addrHi=0, addrCount = 0;
+	int i;
 	// if tag is not part of a group then return false
 	if (group < 1) return false;
 	// if tag has already been read in this cycle the reference time will match
 	if (t.getReferenceTime() == refTime) {
-		//all we need to do is publish the tag
+		//tag value is up-to-date, we can to publish the tag
 		mqtt_publish_tag(t);
 		return true;
 		}
-	// if get to here the tag is part of a group which has not been read in this cycle
-	
+	// the tag is part of a group which has not been read in this cycle
+	slaveId = t.getSlaveId();
 	// assemble tag indexes which belong to same group and slave into one array
-	for () {
-		
+	i = 0;
+	while (tagArray[i] >= 0) {
+		tag = mbReadTags[tagArray[i]];
+		i++;
+		// does the tag belong to this slave?
+		if (tag.getSlaveId() != slaveId) continue;
+		// is the tag in the same group?
+		if (tag.getGroup() != group) continue;
+		// Tag belongs to the same slave and group
+		// determine highest / lowest address to read
+		addr = tag.getAddress();
+		if (addr < addrLo) addrLo = addr;
+		if (addr > addrHi) addrHi = addr; 
+		// 
+		addCount++;
 	}
+	// perform sanity check on address range
+	if
 	
 	// read all tags in this group (multi read)
+	
+	//iterate through register data and set tag values
+	
 	
 	// publish only the one tag referenced in parameters
 	
@@ -550,7 +571,7 @@ void mqtt_topic_update(const char* topic, const char* value) {
  * @param tag: ModbusTag to publish
  * @param noread: publish the "noread" value (for failed read)
  */
-bool mqtt_publish_tag(ModbusTag tag, bool noread = false) {
+bool mqtt_publish_tag(ModbusTag tag, bool noread) {
 	if (!mqtt.isConnected()) return false;
 	if (tag.getTopicString().empty()) return true;	// don't publish if topic is empty
 	if (noread) {
