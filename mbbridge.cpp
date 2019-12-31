@@ -85,6 +85,7 @@ void setMainLoopInterval(int newValue);
 bool modbus_read_tag(ModbusTag tag);
 bool modbus_write_tag(ModbusTag tag);
 void modbus_write_request(int callbackId, Tag *tag);
+bool mqtt_publish_tag(ModbusTag tag, bool noread = false);
 
 TagStore ts;
 MQTT mqtt;
@@ -270,6 +271,42 @@ bool modbus_write_process() {
 	}
 	return false;
 }
+
+/**
+ * modbus read group of tags
+ * reads tags in the same group (and same slave) in one operation.
+ * if called with a tag which has already been read in this cycle
+ * use the previously read result and just publish the value.
+ * @param tagArray: an array tag indexes which are part 
+ * @param arrayIndex: index into current tag array
+ * @param refTime: time reference to identify already read tags
+ * @returns true if group of tags have been read, false if tag is not in a group
+ */
+bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
+	ModbusTag t = mbReadTags[tagArray[arrayIndex]];
+	int group = t.getGroup();
+	// if tag is not part of a group then return false
+	if (group < 1) return false;
+	// if tag has already been read in this cycle the reference time will match
+	if (t.getReferenceTime() == refTime) {
+		//all we need to do is publish the tag
+		mqtt_publish_tag(t);
+		return true;
+		}
+	// if get to here the tag is part of a group which has not been read in this cycle
+	
+	// assemble tag indexes which belong to same group and slave into one array
+	for () {
+		
+	}
+	
+	// read all tags in this group (multi read)
+	
+	// publish only the one tag referenced in parameters
+	
+	return true;	// indicate that tag has been processed
+}
+
 /**
  * process modbus cyclic read update
  * @return false is there was nothing to process, otherwise true
@@ -280,11 +317,14 @@ bool modbus_read_process() {
 	int *tagArray;
 	bool retval = false;
 	time_t now = time(NULL);
+	time_t refTime;
 	while (updateCycles[index].ident >= 0) {
 		// ignore if cycle has no tags to process
 		if (updateCycles[index].tagArray == NULL) {
 			index++; continue;
 		}
+		// new reference time for each read cycle
+		refTime = time(NULL);		// used for group reads
 		if (now >= updateCycles[index].nextUpdateTime) {
 			// set next update cycle time
 			updateCycles[index].nextUpdateTime = now + updateCycles[index].interval;
@@ -293,7 +333,10 @@ bool modbus_read_process() {
 			// read each tag in the array
 			tagIndex = 0;
 			while (tagArray[tagIndex] >= 0) {
-				modbus_read_tag(mbReadTags[tagArray[tagIndex]]);
+				// if tag is not part of a group ....
+				if (!modbus_read_multi_tags(tagArray, tagIndex, refTime))
+					// perform single tag read
+					modbus_read_tag(mbReadTags[tagArray[tagIndex]]);
 				tagIndex++;
 			}
 			retval = true;
@@ -741,6 +784,7 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 	int tagUpdateCycle;
 	string strValue;
 	float fValue;
+	int intValue;
 	
 	int numTags = mbTagsSettings.getLength();
 	if (numTags < 1) {
@@ -759,6 +803,9 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 		if (mbTagsSettings[tagIndex].lookupValue("update_cycle", tagUpdateCycle)) {
 			mbReadTags[mbTagCount].setUpdateCycleId(tagUpdateCycle);
 		}
+		if (mbTagsSettings[tagIndex].lookupValue("group", intValue))
+				mbReadTags[mbTagCount].setGroup(intValue);
+		// is topic present? -> read mqtt related parametrs
 		if (mbTagsSettings[tagIndex].lookupValue("topic", strValue)) {
 			mbReadTags[mbTagCount].setTopic(strValue.c_str());
 			if (mbTagsSettings[tagIndex].lookupValue("format", strValue))

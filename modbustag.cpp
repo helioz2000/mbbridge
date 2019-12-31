@@ -42,6 +42,7 @@ using namespace std;
 
 ModbusTag::ModbusTag() {
 	this->_address = 0;
+	this->_group = 0;
 	this->_topic = "";
 	this->_slaveId = 0;
 	this->_rawValue = 0;
@@ -51,7 +52,8 @@ ModbusTag::ModbusTag() {
 	this->_noread = 0.0;
 	this->_writePending = false;
 	this->_dataType = 'r';
-	//printf("%s - constructor %d %s\n", __func__, this->_slaveId, this->_topic.c_str());
+	this->_referenceTime = 0;
+	//printf("%s - constructor %d %s\\", __func__, this->_slaveId, this->_topic.c_str());
 	//throw runtime_error("Class Tag - forbidden constructor");
 }
 
@@ -117,6 +119,7 @@ void ModbusTag::setRawValue(uint16_t uintValue) {
 			else _rawValue = 0;
 			break;
 	}
+	_lastUpdateTime = time(NULL);
 }
 
 uint16_t ModbusTag::getRawValue(void) {
@@ -182,6 +185,22 @@ bool ModbusTag::setDataType(char newType) {
 
 char ModbusTag::getDataType(void) {
 	return _dataType;
+}
+
+void ModbusTag::setGroup(int newValue) {
+	_group = newValue;
+}
+	
+int ModbusTag::getGroup(void) {
+	return _group;
+}
+
+void ModbusTag::setReferenceTime(time_t newValue) {
+	_referenceTime = newValue;
+}
+	
+time_t ModbusTag::getReferenceTime(void) {
+	return _referenceTime;
 }
 
 void ModbusTag::setWritePending(bool newValue) {

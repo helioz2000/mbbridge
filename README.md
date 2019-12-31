@@ -23,3 +23,11 @@ The main control logic is based on Node-Red (Raspberry Pi) but *node-red-contrib
 * [modbus](https://libmodbus.org/documentation/)
 * [config](https://hyperrealm.github.io/libconfig/libconfig_manual.html)
 * [mosquitto](https://mosquitto.org/api/files/mosquitto-h.html)
+
+## Config File
+#### mbslaves->tags->group
+Multiple tags can be grouped together so they are processed in a single modbus read function. This feature is useful for reading data from consecutive addresses.
+
+**group = 0** is the same as not having a group parameter. 
+
+The grouping algorithm evaluates consecutive tags (from same slave) in the same group (and the same read cycle), determines the lowest and highest address and forms a single request for tags from the lowest address with qty [highest address - lowest address. 

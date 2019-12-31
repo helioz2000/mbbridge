@@ -152,6 +152,26 @@ public:
 	char getDataType(void);
 	
 	/**
+	 * Set group
+	 */
+	void setGroup(int);
+	
+	/**
+	 * Get group
+	 */
+	int getGroup(void);
+
+	/**
+	 * Set reference time
+	 */
+	void setReferenceTime(time_t);
+	
+	/**
+	 * Get reference time
+	 */
+	time_t getReferenceTime(void);
+	
+	/**
 	 * Set write pending
 	 * to indicate that value needs to be written to the slave
 	 */
@@ -179,10 +199,12 @@ private:
 	float _noread;					// value to publish when read fails
 	uint8_t	_slaveId;				// modbus address of slave
 	uint16_t _address;				// the address of the modbus tag in the slave
-	uint16_t _rawValue;					// the value of this modbus tag
-	int _updatecycle_id;				// update cycle identifier
+	int	_group;						// group tags for single read
+	uint16_t _rawValue;				// the value of this modbus tag
+	int _updatecycle_id;			// update cycle identifier
 	time_t _lastUpdateTime;			// last update time (change of value)
 	char _dataType;					// i = input, q = output, r = register
+	time_t _referenceTime;			// time to be used externally only
 };
 
 
