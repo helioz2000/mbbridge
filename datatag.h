@@ -139,6 +139,16 @@ public:
      */
     void setSubscribe(void);
 
+    /**
+     * assign mqtt retain value
+     */
+    void setRetain(bool newRetain);
+
+    /**
+     * get mqtt retain value
+     */
+    bool getRetain(void);
+    
     // public members used to store data which is not used inside this class
     int readInterval;                   // seconds between reads
     time_t nextReadTime;                // next scheduled read
@@ -148,13 +158,14 @@ public:
 private:
     // All properties of this class are private
     // Use setters & getters to access these values
-    std::string topic;                  // storage for topic path
-    uint16_t topicCRC;                  // CRC on topic path
-    double topicDoubleValue;            // storage numeric value
-    time_t lastUpdateTime;              // last update time (change of value)
-    void (*valueUpdate) (int,Tag*);     // callback for value update
+    std::string _topic;                  // storage for topic path
+    uint16_t _topicCRC;                  // CRC on topic path
+    double _topicDoubleValue;            // storage numeric value
+    time_t _lastUpdateTime;              // last update time (change of value)
+    void (*_valueUpdate) (int,Tag*);     // callback for value update
     int _valueUpdateID;                 // ID for value update
-    bool publish;                       // true = we publish, false = we subscribe
+    bool _publish;                       // true = we publish, false = we subscribe
+    bool _publish_retain;                // mqtt publish retain 
 };
 
 class TagStore {
@@ -196,8 +207,8 @@ public:
      Tag* getNextTag(void);
 
 private:
-    Tag *tagList[MAX_TAG_NUM];     // An array references to Tags
-    int iterateIndex;              // to interate over all tags in store
+    Tag *_tagList[MAX_TAG_NUM];     // An array references to Tags
+    int _iterateIndex;              // to interate over all tags in store
 };
 
 #endif /* _DATATAG_H_ */

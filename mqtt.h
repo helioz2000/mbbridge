@@ -107,9 +107,10 @@ public:
      * @param topic: the topic name to be published
      * @param format: printf style format string
      * @param value: the numeric value to publish
+     * @param pubRetain: 
      * @return: message ID, can be used for further tracking
      */
-    int publish(const char* topic, const char* format, float value);
+    int publish(const char* topic, const char* format, float value, bool pubRetain);
 
 	/**
 	 * Clear retained message from mosquitto persistance store

@@ -29,16 +29,15 @@ $(info LDFLAGS ="$(LDFLAGS)")
 #DRIVERS
 
 # folder for our object files
-OBJDIR = ../obj
+OBJDIR = ./obj
 
 CSRCS += $(wildcard *.c)
 CPPSRCS += $(wildcard *.cpp)
-#CPPSRCS += mcp9808/mcp9808.cpp
 
 COBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(CSRCS))
 //COBJS = $(patsubst %.c,%.o,$(CSRCS))
-//CPPOBJS = $(patsubst %.cpp,$(OBJDIR)/%.o,$(CPPSRCS))
-CPPOBJS = $(patsubst %.cpp,%.o,$(CPPSRCS))
+CPPOBJS = $(patsubst %.cpp,$(OBJDIR)/%.o,$(CPPSRCS))
+//CPPOBJS = $(patsubst %.cpp,%.o,$(CPPSRCS))
 
 SRCS = $(CSRCS) $(CPPSRCS)
 OBJS = $(COBJS) $(CPPOBJS)
@@ -51,8 +50,8 @@ $(OBJDIR)/%.o: %.c
 	@$(CC)  $(CFLAGS) -c $< -o $@
 	@echo "CC $<"
 
-#$(OBJDIR)/%.o: %.cpp
-%.o: %.cpp
+$(OBJDIR)/%.o: %.cpp
+#%.o: %.cpp
 	@$(CXX)  $(CFLAGS) -c $< -o $@
 	@echo "CXX $<"
 
@@ -61,7 +60,7 @@ default: $(OBJS)
 
 #	nothing to do but will print info
 nothing:
-#	$(info OBJS ="$(OBJS)")
+	$(info OBJS ="$(OBJS)")
 	$(info DONE)
 
 

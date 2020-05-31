@@ -61,7 +61,7 @@ bool mqttDebugEnabled = false;
 bool runningAsDaemon = false;
 time_t mqtt_connect_time = 0;   // time the connection was initiated
 bool mqtt_connection_in_progress = false;
-bool mqtt_retain = false;
+bool mqtt_retain_default = false;
 std::string processName;
 char *info_label_text;
 useconds_t mainloopinterval = 250;   // milli seconds
@@ -239,7 +239,7 @@ bool var_process(void) {
 		// publish time due ?
 		if (tag->nextPublishTime <= now) {
 			if (mqtt.isConnected()) {
-				mqtt.publish(tag->getTopic(), "%.1f", tag->floatValue() );
+				mqtt.publish(tag->getTopic(), "%.1f", tag->floatValue(), tag->getRetain() );
 				retval = true;
 			}
 			tag->nextPublishTime = now + tag->publishInterval;
@@ -533,8 +533,8 @@ bool mqtt_init(void) {
 			if (mqttDebugEnabled) printf("%s - mqtt debug enabled\n", __func__);
 		}
 	}
-	if (cfg.lookupValue("mqtt.retain", bValue))
-		mqtt_retain = bValue;
+	if (cfg.lookupValue("mqtt.retain_default", bValue))
+		mqtt_retain_default = bValue;
 	mqtt.registerConnectionCallback(mqtt_connection_status);
 	mqtt.registerTopicUpdateCallback(mqtt_topic_update);
 	mqtt_connect();
@@ -569,7 +569,7 @@ void mqtt_connection_status(bool status) {
 	if (status) {
 		log(LOG_INFO, "Connected to MQTT broker [%s]", mqtt.broker());
 		mqtt_connection_in_progress = false;
-		mqtt.setRetain(mqtt_retain);
+		mqtt.setRetain(mqtt_retain_default);
 		mqtt_subscribe_tags();
 	} else {
 		if (mqtt_connection_in_progress) {
@@ -612,9 +612,9 @@ bool mqtt_publish_tag(ModbusTag tag, bool noread) {
 	if (!mqtt.isConnected()) return false;
 	if (tag.getTopicString().empty()) return true;	// don't publish if topic is empty
 	if (noread) {
-		mqtt.publish(tag.getTopic(), tag.getFormat(), tag.getNoreadValue());
+		mqtt.publish(tag.getTopic(), tag.getFormat(), tag.getNoreadValue(), tag.getRetain());
 	} else {
-		mqtt.publish(tag.getTopic(), tag.getFormat(), tag.getScaledValue());
+		mqtt.publish(tag.getTopic(), tag.getFormat(), tag.getScaledValue(), tag.getRetain());
 	}
 	return true;
 }
@@ -672,9 +672,9 @@ void modbus_slave_set_online_status (int slaveId, bool newStatus, bool forceRepo
 			topic = topic.append(std::to_string(slaveId));
 			//printf("%s - topic= %s value=%d\n", __func__, topic.c_str(), mbSlaveOnline[slaveId]);
 			if (mbSlaveOnline[slaveId]) {
-				mqtt.publish(topic.c_str(), "%.0f", 1);
+				mqtt.publish(topic.c_str(), "%.0f", 1, false);
 			} else {
-				mqtt.publish(topic.c_str(), "%.0f", 0);
+				mqtt.publish(topic.c_str(), "%.0f", 0, false);
 			}
 		}
 	}
@@ -871,6 +871,7 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 	string strValue;
 	float fValue;
 	int intValue;
+	bool bValue;
 	
 	int numTags = mbTagsSettings.getLength();
 	if (numTags < 1) {
@@ -894,6 +895,8 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 		// is topic present? -> read mqtt related parametrs
 		if (mbTagsSettings[tagIndex].lookupValue("topic", strValue)) {
 			mbReadTags[mbTagCount].setTopic(strValue.c_str());
+			if (mbTagsSettings[tagIndex].lookupValue("retain", bValue))
+				mbReadTags[mbTagCount].setRetain(bValue);
 			if (mbTagsSettings[tagIndex].lookupValue("format", strValue))
 				mbReadTags[mbTagCount].setFormat(strValue.c_str());
 			if (mbTagsSettings[tagIndex].lookupValue("multiplier", fValue))

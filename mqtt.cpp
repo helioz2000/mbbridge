@@ -177,7 +177,7 @@ void MQTT::registerTopicUpdateCallback(void (*callback) (const char*, const char
     topicUpdateCallback = callback;
 }
 
-int MQTT::publish(const char* topic, const char* format, float value) {
+int MQTT::publish(const char* topic, const char* format, float value, bool pubRetain) {
     int messageid = 0;
     if (!_connected) {
         fprintf(stderr, "%s: Not Connected!\n", __func__);
@@ -187,7 +187,7 @@ int MQTT::publish(const char* topic, const char* format, float value) {
     }
     sprintf(_pub_buf, format, value);
     //printf ("%s: %s %s\n", __func__, topic, pub_buf);
-    int result = mosquitto_publish(_mosq, &messageid, topic, strlen(_pub_buf), (const char *) _pub_buf, _qos, _retain);
+    int result = mosquitto_publish(_mosq, &messageid, topic, strlen(_pub_buf), (const char *) _pub_buf, _qos, pubRetain);
     if (result != MOSQ_ERR_SUCCESS) {
         fprintf(stderr, "%s: %s [%s]\n", __func__, mosquitto_strerror(result), topic);
     }

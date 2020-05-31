@@ -110,6 +110,16 @@ public:
 	 */
 	void setTopic(const char*);
 
+    /**
+     * assign mqtt retain value
+     */
+    void setRetain(bool newRetain);
+
+    /**
+     * get mqtt retain value
+     */
+    bool getRetain(void);
+
 	/**
 	* Get the format string
 	* @return the format string
@@ -192,7 +202,8 @@ private:
 	// All properties of this class are private
 	// Use setters & getters to access these values
 	std::string _topic;				// storage for topic path
-	std::string _format;				// storage for publish format
+	std::string _format;			// storage for publish format
+	bool _publish_retain;           // publish with or without retain
 	bool _writePending;				// value needs to be written to slave
 	float _multiplier;				// multiplier for scaled value
 	float _offset;					// offset for scaled value

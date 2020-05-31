@@ -98,6 +98,14 @@ std::string ModbusTag::getTopicString(void) {
 	return _topic;
 }
 
+void ModbusTag::setRetain(bool newRetain) {
+    _publish_retain = newRetain;
+}
+
+bool ModbusTag::getRetain(void) {
+    return _publish_retain;
+}
+
 void ModbusTag::setFormat(const char *formatStr) {
 	if (formatStr != NULL) {
 		_format = formatStr;

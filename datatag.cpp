@@ -107,12 +107,13 @@ Tag::Tag(const char *topicStr) {
     if (topicStr == NULL) {
         throw invalid_argument("Class Tag - topic is NULL");
     }
-    this->topic = topicStr;
-    valueUpdate = NULL;
+    this->_topic = topicStr;
+    _valueUpdate = NULL;
     _valueUpdateID = -1;
-    publish = false;        // subscribe tag
+    _publish = false;        // subscribe tag
+    _publish_retain = false;
     //cout << topic << endl;
-    topicCRC = gen_crc16(topic.data(), topic.length());
+    _topicCRC = gen_crc16(_topic.data(), _topic.length());
     //cout << topicCRC << endl;
 }
 
@@ -121,16 +122,16 @@ Tag::~Tag() {
 }
 
 const char* Tag::getTopic(void) {
-    return topic.c_str();
+    return _topic.c_str();
 }
 
 uint16_t Tag::getTopicCrc(void) {
-    return topicCRC;
+    return _topicCRC;
 }
 
 void Tag::registerCallback(void (*updateCallback) (int, Tag*), int callBackID) {
     //printf("%s - 1\n", __func__);
-    valueUpdate = updateCallback;
+    _valueUpdate = updateCallback;
     _valueUpdateID = callBackID;
     //printf("%s - 2\n", __func__);
 }
@@ -140,17 +141,17 @@ int Tag::valueUpdateID(void) {
 }
 
 void Tag::testCallback() {
-    if (valueUpdate != NULL) {
-        (*valueUpdate) (_valueUpdateID, this);
+    if (_valueUpdate != NULL) {
+        (*_valueUpdate) (_valueUpdateID, this);
     }
 }
 
 void Tag::setValue(double doubleValue) {
-    topicDoubleValue = doubleValue;
-    lastUpdateTime = time(NULL);
+    _topicDoubleValue = doubleValue;
+    _lastUpdateTime = time(NULL);
     // call valueUpdate callback if it exists
-    if (valueUpdate != NULL) {
-        (*valueUpdate) (_valueUpdateID, this);
+    if (_valueUpdate != NULL) {
+        (*_valueUpdate) (_valueUpdateID, this);
     }
 }
 
@@ -166,7 +167,7 @@ bool Tag::setValue(const char* strValue) {
     float newValue;
     int result = sscanf(strValue, "%f", &newValue);
     if (result != 1) {
-        fprintf(stderr, "%s - failed to convert <%s> for topic %s\n", __func__, strValue, topic.c_str());
+        fprintf(stderr, "%s - failed to convert <%s> for topic %s\n", __func__, strValue, _topic.c_str());
         return false;
     }
     setValue(newValue);
@@ -174,31 +175,39 @@ bool Tag::setValue(const char* strValue) {
 }
 
 double Tag::doubleValue(void) {
-    return topicDoubleValue;
+    return _topicDoubleValue;
 }
 
 float Tag::floatValue(void) {
-    return (float) topicDoubleValue;
+    return (float) _topicDoubleValue;
 }
 
 int Tag::intValue(void) {
-    return (int) topicDoubleValue;
+    return (int) _topicDoubleValue;
 }
 
 bool Tag::isPublish() {
-    return publish;
+    return _publish;
 }
 
 bool Tag::isSubscribe() {
-    return !publish;
+    return !_publish;
 }
 
 void Tag::setPublish(void) {
-    publish = true;
+    _publish = true;
 }
 
 void Tag::setSubscribe(void) {
-    publish = false;
+    _publish = false;
+}
+
+void Tag::setRetain(bool newRetain) {
+    _publish_retain = newRetain;
+}
+
+bool Tag::getRetain(void) {
+    return _publish_retain;
 }
 
 //
@@ -208,9 +217,9 @@ void Tag::setSubscribe(void) {
 TagStore::TagStore() {
     // mark tag list entries as empty
     for (int i = 0; i < MAX_TAG_NUM; i++) {
-        tagList[i] = NULL;
+        _tagList[i] = NULL;
     }
-    iterateIndex = -1;
+    _iterateIndex = -1;
 }
 
 TagStore::~TagStore() {
@@ -220,8 +229,8 @@ TagStore::~TagStore() {
 void TagStore::deleteAll(void) {
     // delete every tag
     for (int i = 0; i < MAX_TAG_NUM; i++) {
-        delete(tagList[i]);
-        tagList[i] = NULL;
+        delete(_tagList[i]);
+        _tagList[i] = NULL;
     }
 }
 
@@ -232,9 +241,9 @@ Tag *TagStore::getTag(const char* tagTopic) {
     Tag *retTag =  NULL;
 
     for (int index = 0; index < MAX_TAG_NUM; index++) {
-        if (tagList[index] == NULL) continue;
-        if (tagCrc == tagList[index]->getTopicCrc()) {
-            retTag = tagList[index];
+        if (_tagList[index] == NULL) continue;
+        if (tagCrc == _tagList[index]->getTopicCrc()) {
+            retTag = _tagList[index];
             break;
         }
     }
@@ -245,9 +254,9 @@ Tag* TagStore::getFirstTag(void) {
     int index;
     // find first free entry in tag list
     for (index = 0; index < MAX_TAG_NUM; index++) {
-        if (tagList[index] != NULL) {
-            iterateIndex = index;
-            return tagList[index];
+        if (_tagList[index] != NULL) {
+            _iterateIndex = index;
+            return _tagList[index];
         }
     }
     return NULL;    // no tags found
@@ -256,16 +265,16 @@ Tag* TagStore::getFirstTag(void) {
 Tag* TagStore::getNextTag(void) {
     int index;
     // check if getFirstTag has been called
-    if (iterateIndex < 0) return NULL;
+    if (_iterateIndex < 0) return NULL;
     // find first free entry in tag list
-    for (index = iterateIndex+1; index < MAX_TAG_NUM; index++) {
-        if (tagList[index] != NULL) {
-            iterateIndex = index;
-            return tagList[index];
+    for (index = _iterateIndex+1; index < MAX_TAG_NUM; index++) {
+        if (_tagList[index] != NULL) {
+            _iterateIndex = index;
+            return _tagList[index];
         }
     }
     // No more tags found
-    iterateIndex = -1; // reset iterateIndex
+    _iterateIndex = -1; // reset iterateIndex
     return NULL;
 }
 
@@ -273,7 +282,7 @@ Tag* TagStore::addTag(const char* tagTopic) {
     int index, freeIndex = -1;
     // find first free entry in tag list
     for (index = 0; index < MAX_TAG_NUM; index++) {
-        if (tagList[index] == NULL) {
+        if (_tagList[index] == NULL) {
             freeIndex = index;
             break;
         }
@@ -282,7 +291,7 @@ Tag* TagStore::addTag(const char* tagTopic) {
     if (freeIndex < 0) return NULL;
     // create new tag and store in list
     Tag *tPtr = new Tag(tagTopic);
-    tagList[index] = tPtr;
+    _tagList[index] = tPtr;
     //printf("%s - [%d] - %s\n", __func__, index, tPtr->getTopic());
     return tPtr;
 }
