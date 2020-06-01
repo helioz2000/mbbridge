@@ -44,13 +44,13 @@ all: default
 
 $(OBJDIR)/%.o: %.c
 	@mkdir -p $(OBJDIR)
-	@$(CC)  $(CFLAGS) -c $< -o $@
 	@echo "CC $<"
+	@$(CC)  $(CFLAGS) -c $< -o $@
 
 $(OBJDIR)/%.o: %.cpp
 	@mkdir -p $(OBJDIR)
-	@$(CXX)  $(CFLAGS) -c $< -o $@
 	@echo "CXX $<"
+	@$(CXX)  $(CFLAGS) -c $< -o $@
 
 default: $(OBJS)
 	$(CC) -o $(BIN) $(OBJS) $(LDFLAGS) $(LIBS)

@@ -72,6 +72,7 @@ updatecycle *updateCycles = NULL;	// array of update cycle definitions
 ModbusTag *mbReadTags = NULL;			// array of all modbus read tags
 ModbusTag *mbWriteTags = NULL;			// array of all modbus write tags
 int mbTagCount = -1;
+uint32_t modbusinterslavedelay = 0;	// delay between modbus transactions
 #define MODBUS_SLAVE_MAX 254		// highest permitted slave ID
 #define MODBUS_SLAVE_MIN 1			// lowest permitted slave ID
 bool mbSlaveOnline[MODBUS_SLAVE_MAX+1];			// array to store online/offline status
@@ -337,6 +338,8 @@ bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 		//printf("%s: modbus_read_holding_registers failed\n", __func__);
 		delete [] mbReadRegisters;
 		return false;
+	} else {
+		usleep(modbusinterslavedelay);
 	}
 	
 	//iterate through register data
@@ -367,7 +370,7 @@ bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 
 /**
  * process modbus cyclic read update
- * @return false is there was nothing to process, otherwise true
+ * @return false if there was nothing to process, otherwise true
  */
 bool modbus_read_process() {
 	int index = 0;
@@ -396,6 +399,7 @@ bool modbus_read_process() {
 					// perform single tag read
 					modbus_read_tag(mbReadTags[tagArray[tagIndex]]);
 				tagIndex++;
+				usleep(modbusinterslavedelay);
 			}
 			retval = true;
 			//cout << now << " Update Cycle: " << updateCycles[index].ident << " - " << updateCycles[index].tagArraySize << " tags" << endl;
@@ -761,7 +765,7 @@ bool modbus_read_holding_registers(int slaveId, modbus_t *ctx, int addr, int nb,
 			if (!runningAsDaemon)
 				printf("%s - failed: illegal data address %d on slave %d\n", __func__, addr, slaveId);
 		}
-		log(LOG_ERR, "Modbus Read failed (%x): %s", errno, modbus_strerror(errno));
+		log(LOG_ERR, "Modbus Read #%d failed (%x): %s", slaveId, errno, modbus_strerror(errno));
 	} else {
 		// successful read
 		modbus_slave_set_online_status(slaveId, true);
@@ -1094,7 +1098,7 @@ bool init_modbus()
 			if (modbusDebugLevel > 0) {
 				printf("%s - Modbus Debug Level %d\n", __func__, modbusDebugLevel);
 				if (modbus_get_response_timeout(mb_ctx, &response_to_sec, &response_to_usec) >= 0) {
-					printf("%s response timeout %ds %dus\n", __func__, response_to_sec, response_to_usec);
+					printf("%s default response timeout %ds %dus\n", __func__, response_to_sec, response_to_usec);
 				}
 			}
 			// enable libmodbus debugging
@@ -1116,7 +1120,20 @@ bool init_modbus()
 	}
 	if ((response_to_usec > 0) || (response_to_sec > 0)) {
 		modbus_set_response_timeout(mb_ctx, response_to_sec, response_to_usec);
+		if (modbusDebugLevel > 0) {
+			if (modbus_get_response_timeout(mb_ctx, &response_to_sec, &response_to_usec) >= 0) {
+				log(LOG_INFO, "%s custom response timeout %ds %dus", __func__, response_to_sec, response_to_usec);
+			}
+		}
 	}
+	
+	if (cfg_get_int("modbusrtu.interslavedelay", newValue)) {
+		modbusinterslavedelay = newValue;
+		if (modbusDebugLevel > 0) {
+			log(LOG_INFO, "%s modbus inter slave delay: %dus", __func__, modbusinterslavedelay);
+		}
+	}
+
 	
 	//modbus_set_error_recovery(mb_ctx, modbus_error_recovery_mode(MODBUS_ERROR_RECOVERY_LINK | MODBUS_ERROR_RECOVERY_PROTOCOL));
 	
@@ -1128,7 +1145,7 @@ bool init_modbus()
 		return false;
 	}
 	
-	log(LOG_INFO, "Modbus RTU opened on port %s at %d", rtu_port.c_str(), port_baud);
+	log(LOG_INFO, "Modbus RTU opened on port %s at %d baud", rtu_port.c_str(), port_baud);
 	
 	if (!modbus_config()) return false;
 	if (!modbus_assign_updatecycles()) return false;

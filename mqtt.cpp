@@ -186,7 +186,7 @@ int MQTT::publish(const char* topic, const char* format, float value, bool pubRe
         //printf ("%s: %s\n", __func__, topic);
     }
     sprintf(_pub_buf, format, value);
-    //printf ("%s: %s %s\n", __func__, topic, pub_buf);
+    //printf ("%s: %s %s\n", __func__, topic, _pub_buf);
     int result = mosquitto_publish(_mosq, &messageid, topic, strlen(_pub_buf), (const char *) _pub_buf, _qos, pubRetain);
     if (result != MOSQ_ERR_SUCCESS) {
         fprintf(stderr, "%s: %s [%s]\n", __func__, mosquitto_strerror(result), topic);
