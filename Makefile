@@ -2,9 +2,11 @@
 # Makefile
 #
 BIN = mbbridge
-BINDIR = /usr/sbin/
+BINDIR = /usr/local/sbin/
 DESTDIR = /usr
 PREFIX = /local
+SERVICE = mbbridge.service
+SERVICEDIR = /etc/systemd/system
 
 # modbus header files could be located in different directories
 INC += -I$(DESTDIR)/include/modbuspp -I$(DESTDIR)/include/modbus
@@ -63,9 +65,15 @@ clean:
 	rm -f $(OBJS)
 
 install:
-#	install -o root $(BIN) $(BINDIR)$(BIN)
-#	@echo ++++++++++++++++++++++++++++++++++++++++++++
-#	@echo ++ $(BIN) has been installed in $(BINDIR)
-#	@echo ++ systemctl start $(BIN)
-#	@echo ++ systemctl stop $(BIN)
-#
+	install -o root $(BIN) $(BINDIR)$(BIN)
+	@echo ++++++++++++++++++++++++++++++++++++++++++++
+	@echo ++ $(BIN) has been installed in $(BINDIR)
+	@echo ++ systemctl start $(BIN)
+	@echo ++ systemctl stop $(BIN)
+
+# make systemd service
+service:
+	install -o root $(SERVICE) $(SERVICEDIR)
+	@systemctl daemon-reload
+	@systemctl enable mbbridge.service
+	@echo $(BIN) is now available a systemd service

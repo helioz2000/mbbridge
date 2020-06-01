@@ -1,0 +1,15 @@
+[Unit]
+Description=MQTT to Modbus bridge
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/local/sbin/mbbridge -c/etc/mmbridge
+WorkingDirectory=/root
+Restart=no
+RestartSec=30
+User=root
+
+[Install]
+WantedBy=multi-user.target
