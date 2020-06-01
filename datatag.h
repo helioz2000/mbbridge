@@ -22,12 +22,27 @@
 #ifndef _DATATAG_H_
 #define _DATATAG_H_
 
+/*********************
+ *      INCLUDES
+ *********************/
 #include <stdint.h>
 
 #include <iostream>
 #include <string>
 
+/*********************
+ *      DEFINES
+ *********************/
 #define MAX_TAG_NUM 100         // The mximum number of tags which can be stored in TagList
+
+/**********************
+ *      TYPEDEFS
+ **********************/
+    typedef enum
+    {
+        TAG_TYPE_NUMERIC = 0,
+        TAG_TYPE_BOOL = 1
+    }tag_type_t;
 
 
 class Tag {
@@ -149,6 +164,17 @@ public:
      */
     bool getRetain(void);
     
+    /**
+     * Set tag type (see tag_type_t)
+     */
+    void setType(tag_type_t newType);
+    
+    /**
+     * Get tag type (see tag_type_t)
+     */
+    tag_type_t type(void);
+    
+    
     // public members used to store data which is not used inside this class
     int readInterval;                   // seconds between reads
     time_t nextReadTime;                // next scheduled read
@@ -163,9 +189,10 @@ private:
     double _topicDoubleValue;            // storage numeric value
     time_t _lastUpdateTime;              // last update time (change of value)
     void (*_valueUpdate) (int,Tag*);     // callback for value update
-    int _valueUpdateID;                 // ID for value update
+    int _valueUpdateID;                  // ID for value update
     bool _publish;                       // true = we publish, false = we subscribe
-    bool _publish_retain;                // mqtt publish retain 
+    bool _retain;                        // mqtt publish retain
+    tag_type_t _type;                    // data type
 };
 
 class TagStore {

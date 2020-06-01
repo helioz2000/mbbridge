@@ -35,9 +35,7 @@ CSRCS += $(wildcard *.c)
 CPPSRCS += $(wildcard *.cpp)
 
 COBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(CSRCS))
-//COBJS = $(patsubst %.c,%.o,$(CSRCS))
 CPPOBJS = $(patsubst %.cpp,$(OBJDIR)/%.o,$(CPPSRCS))
-//CPPOBJS = $(patsubst %.cpp,%.o,$(CPPSRCS))
 
 SRCS = $(CSRCS) $(CPPSRCS)
 OBJS = $(COBJS) $(CPPOBJS)
@@ -47,11 +45,11 @@ OBJS = $(COBJS) $(CPPOBJS)
 all: default
 
 $(OBJDIR)/%.o: %.c
+	@mkdir -p $(OBJDIR)
 	@$(CC)  $(CFLAGS) -c $< -o $@
 	@echo "CC $<"
 
 $(OBJDIR)/%.o: %.cpp
-#%.o: %.cpp
 	@$(CXX)  $(CFLAGS) -c $< -o $@
 	@echo "CXX $<"
 

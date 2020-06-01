@@ -255,7 +255,7 @@ bool var_process(void) {
 /**
  * process modbus write
  * only one write function is processed per call
- * @return false is there was nothing to process, otherwise true
+ * @return false if there was nothing to process, otherwise true
  */
 bool modbus_write_process() {
 	int idx = 0;
@@ -406,7 +406,7 @@ bool modbus_read_process() {
 	return retval;
 }
 
-/** Process all  variables
+/** Process all variables
  * @return true if at least one variable was processed
  * Note: the return value from this function is used 
  * to measure processing time

@@ -111,7 +111,7 @@ Tag::Tag(const char *topicStr) {
     _valueUpdate = NULL;
     _valueUpdateID = -1;
     _publish = false;        // subscribe tag
-    _publish_retain = false;
+    _retain = false;
     //cout << topic << endl;
     _topicCRC = gen_crc16(_topic.data(), _topic.length());
     //cout << topicCRC << endl;
@@ -165,9 +165,21 @@ void Tag::setValue(int intValue) {
 
 bool Tag::setValue(const char* strValue) {
     float newValue;
-    int result = sscanf(strValue, "%f", &newValue);
+    int result = 0;
+    char firstChar = strValue[0];
+    
+    // check for numeric data
+    if ( (firstChar >= '0') && (firstChar <='9') ) {
+        result = sscanf(strValue, "%f", &newValue);
+    } else {    // non-numeric, assume its "true" or "false"
+        if ( (firstChar == 'f') || (firstChar == 'F') ) {
+            newValue = 0; result = 1; }
+        if ( (firstChar == 't') || (firstChar == 'T') ) {
+            newValue = 1; result = 1; }
+    }
+    // report conversion failure
     if (result != 1) {
-        fprintf(stderr, "%s - failed to convert <%s> for topic %s\n", __func__, strValue, _topic.c_str());
+        fprintf(stderr, "%s[%d] %s - failed to convert <%s> for topic %s\n", __FILE__,__LINE__,__func__, strValue, _topic.c_str());
         return false;
     }
     setValue(newValue);
@@ -203,11 +215,19 @@ void Tag::setSubscribe(void) {
 }
 
 void Tag::setRetain(bool newRetain) {
-    _publish_retain = newRetain;
+    _retain = newRetain;
 }
 
 bool Tag::getRetain(void) {
-    return _publish_retain;
+    return _retain;
+}
+
+void Tag::setType(tag_type_t newType) {
+    _type = newType;
+}
+
+tag_type_t Tag::type(void) {
+    return _type;
 }
 
 //

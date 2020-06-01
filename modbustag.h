@@ -120,6 +120,28 @@ public:
      */
     bool getRetain(void);
 
+    /**
+     * is tag "publish"
+     * @return true if publish or false if subscribe
+     */
+    bool isPublish();
+
+    /**
+     * is tag "subscribe"
+     * @return false if publish or true if subscribe
+     */
+    bool isSubscribe();
+
+    /**
+     * Mark tag as "publish"
+     */
+    void setPublish(void);
+
+    /**
+     * Mark tag as "subscribe" (NOT publish)
+     */
+    void setSubscribe(void);
+
 	/**
 	* Get the format string
 	* @return the format string
@@ -204,6 +226,7 @@ private:
 	std::string _topic;				// storage for topic path
 	std::string _format;			// storage for publish format
 	bool _publish_retain;           // publish with or without retain
+	bool _write;					// true for write tag, false for read tag
 	bool _writePending;				// value needs to be written to slave
 	float _multiplier;				// multiplier for scaled value
 	float _offset;					// offset for scaled value
