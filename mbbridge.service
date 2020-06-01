@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 ExecStartPre=/bin/sleep 5
-ExecStart=/usr/local/sbin/mbbridge -c/etc/mmbridge
+ExecStart=/usr/local/sbin/mbbridge -c/etc/mbbridge
 WorkingDirectory=/root
 Restart=no
 RestartSec=30
