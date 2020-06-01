@@ -1286,7 +1286,7 @@ bool parseArguments(int argc, char *argv[]) {
 			if ((buffer[0] == '-') && (buflen >=2)) {
 				switch (buffer[1]) {
 				case 'c':
-					cfgFileName = std::string(&buffer[1]);
+					cfgFileName = std::string(&buffer[2]);
 					break;
 				case 'd':
 					debugEnabled = true;
