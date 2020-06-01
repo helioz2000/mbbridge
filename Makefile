@@ -5,11 +5,9 @@ BIN = mbbridge
 BINDIR = /usr/sbin/
 DESTDIR = /usr
 PREFIX = /local
-INCDIR1 = $(DESTDIR)/include/modbuspp
-INCDIR2 = $(DESTDIR)/include/modbus
 
 # modbus header files could be located in different directories
-INC += -I$(DESTDIR)/include/modbuspp -I$(DESTDIR)/include/modbus/include/modbus
+INC += -I$(DESTDIR)/include/modbuspp -I$(DESTDIR)/include/modbus
 INC += -I$(DESTDIR)$(PREFIX)/include/modbuspp -I$(DESTDIR)$(PREFIX)/include/modbus
 
 CC=gcc
@@ -21,9 +19,10 @@ CFLAGS += -O3 -g3 $(INC)
 LDFLAGS = -L$(DESTDIR)$(PREFIX)/lib
 LIBS += -lstdc++ -lm -lmosquitto -lconfig++ -lmodbus
 
-VPATH =
+#VPATH =
 
-$(info LDFLAGS ="$(LDFLAGS)")
+#$(info LDFLAGS ="$(LDFLAGS)")
+#$(info INC="$(INC)")
 
 # folder for our object files
 OBJDIR = ./obj
