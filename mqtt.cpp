@@ -29,7 +29,7 @@
  *********************/
 
 #define DEFAULT_CLIENT_ID "mqtt_client"        // our ID for broker connection
-#define MQTT_BROKER_DEFAULT "127.0.0.2"
+#define MQTT_BROKER_DEFAULT "127.0.0.1"
 #define MQTT_BROKER_DEFAULT_PORT 1883
 #define MQTT_BROKER_DEFAULT_KEEPALIVE 60
 #define MQTT_RETAIN_DEFAULT false
