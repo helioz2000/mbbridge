@@ -8,10 +8,14 @@ PREFIX = /local
 INCDIR1 = $(DESTDIR)/include/modbuspp
 INCDIR2 = $(DESTDIR)/include/modbus
 
+# modbus header files could be located in different directories
+INC += -I$(DESTDIR)/include/modbuspp -I$(DESTDIR)/include/modbus/include/modbus
+INC += -I$(DESTDIR)$(PREFIX)/include/modbuspp -I$(DESTDIR)$(PREFIX)/include/modbus
+
 CC=gcc
 CXX=g++
 CFLAGS = -Wall -Wshadow -Wundef -Wmaybe-uninitialized -Wno-unknown-pragmas
-CFLAGS += -O3 -g3 -I$(INCDIR1) -I$(INCDIR2)
+CFLAGS += -O3 -g3 $(INC)
 
 # directory for local libs
 LDFLAGS = -L$(DESTDIR)$(PREFIX)/lib
@@ -20,13 +24,6 @@ LIBS += -lstdc++ -lm -lmosquitto -lconfig++ -lmodbus
 VPATH =
 
 $(info LDFLAGS ="$(LDFLAGS)")
-
-#LVGL_DIR =  ${shell pwd}
-#INC=-I$(LVGL_DIR)
-
-#LIBRARIES
-
-#DRIVERS
 
 # folder for our object files
 OBJDIR = ./obj
@@ -50,6 +47,7 @@ $(OBJDIR)/%.o: %.c
 	@echo "CC $<"
 
 $(OBJDIR)/%.o: %.cpp
+	@mkdir -p $(OBJDIR)
 	@$(CXX)  $(CFLAGS) -c $< -o $@
 	@echo "CXX $<"
 
