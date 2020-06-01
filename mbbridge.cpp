@@ -1122,7 +1122,7 @@ bool init_modbus()
 	
 	// Attempt to open serial device
 	if (modbus_connect(mb_ctx) == -1) {
-		log(LOG_ERR, "Connection failed: %s\n", modbus_strerror(errno));
+		log(LOG_ERR, "Connection to %s failed: %s\n", rtu_port.c_str(), modbus_strerror(errno));
 		modbus_free(mb_ctx);
 		mb_ctx = NULL;
 		return false;
