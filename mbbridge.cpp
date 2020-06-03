@@ -73,6 +73,7 @@ ModbusTag *mbReadTags = NULL;			// array of all modbus read tags
 ModbusTag *mbWriteTags = NULL;			// array of all modbus write tags
 int mbTagCount = -1;
 uint32_t modbusinterslavedelay = 0;	// delay between modbus transactions
+int mbMaxRetries = 0;					// number of retries on modbus error (config file)
 #define MODBUS_SLAVE_MAX 254		// highest permitted slave ID
 #define MODBUS_SLAVE_MIN 1			// lowest permitted slave ID
 bool mbSlaveOnline[MODBUS_SLAVE_MAX+1];			// array to store online/offline status
@@ -749,23 +750,29 @@ bool modbus_write_tag(ModbusTag tag) {
 bool modbus_read_holding_registers(int slaveId, modbus_t *ctx, int addr, int nb, uint16_t *dest) {
 	bool retVal = false;
 	int i;
+	int retrycount = 0;
 	if (modbusDebugLevel > 0)
 		printf ("%s - reading #%d HR %d qty %d\n", __func__, slaveId, addr, nb);
 	
 	modbus_set_slave(ctx, slaveId);
-	
+retry:	
 	int rc = modbus_read_registers(ctx, addr, nb, dest);	// returns qty of registers read
 	if (rc != nb) {
+		log(LOG_ERR, "Modbus Read #%d failed (%x): %s", slaveId, errno, modbus_strerror(errno));
+		// retry count reached ?
+		if (retrycount < mbMaxRetries) {
+			retrycount++;
+			goto retry;
+		}
 		if (errno == 110) {		//timeout
 			if (!runningAsDaemon)
-				printf("%s - failed: no response from slave %d (timeout)\n", __func__, slaveId);
+				printf("%s - failed: no response from slave %d (timeout) [%d]\n", __func__, slaveId, rc);
 			modbus_slave_set_online_status(slaveId, false);
 		} 
 		if (errno == 0x6b24250) {	// Illegal Data Address
 			if (!runningAsDaemon)
 				printf("%s - failed: illegal data address %d on slave %d\n", __func__, addr, slaveId);
 		}
-		log(LOG_ERR, "Modbus Read #%d failed (%x): %s", slaveId, errno, modbus_strerror(errno));
 	} else {
 		// successful read
 		modbus_slave_set_online_status(slaveId, true);
@@ -1110,6 +1117,10 @@ bool init_modbus()
 	if (cfg.lookupValue("modbusrtu.slavestatustopic", strValue)) {
 		mbSlaveStatusTopic = strValue;
 		//printf("%s - mbSlaveStatusTopic: %s\n", __func__, mbSlaveStatusTopic.c_str());
+	}
+	
+	if (cfg_get_int("modbusrtu.maxretries", newValue)) {
+		mbMaxRetries = newValue;
 	}
 	// set new response timeout if configured
 	if (cfg_get_int("modbusrtu.responsetimeout_us", newValue)) {

@@ -1,5 +1,6 @@
 mbbridge
 git.txt
+obj
 
 # Compiled Object files
 *.slo
@@ -8,5 +9,6 @@ git.txt
 *.obj
 
 #Apple
+.AppleDouble
 ._*
 .DS_Store
