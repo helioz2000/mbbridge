@@ -49,7 +49,10 @@ ModbusTag::ModbusTag() {
 	this->_multiplier = 1.0;
 	this->_offset = 0.0;
 	this->_format = "%f";
-	this->_noread = 0.0;
+	this->_noreadvalue = 0.0;
+	this->_noreadaction = -1;	// do nothing
+	this->_noreadignore = 0;
+	this->_noreadcount = 0;
 	this->_writePending = false;
 	this->_dataType = 'r';
 	this->_referenceTime = 0;
@@ -67,6 +70,20 @@ ModbusTag::~ModbusTag() {
 	//printf("%s - destructor %d\n", __func__, address);
 }
 
+void ModbusTag::noreadNotify(void) {
+	if (_noreadcount <= _noreadignore)	// if noreadignore is 0 noreadcount will still increment to 1
+		_noreadcount++;					// a noreadcount > 0 indicates the tag is in noread state
+}
+
+bool ModbusTag::isNoread(void) {
+	if (_noreadcount > 0) return true;
+	else return false;
+}
+
+bool ModbusTag::noReadIgnoreExceeded(void) {
+	if (_noreadcount > _noreadignore) return true;
+	else return false;
+}
 
 void ModbusTag::setSlaveId(int newId) {
 	_slaveId = newId;
@@ -128,6 +145,7 @@ void ModbusTag::setRawValue(uint16_t uintValue) {
 			break;
 	}
 	_lastUpdateTime = time(NULL);
+	_noreadcount = 0;
 }
 
 uint16_t ModbusTag::getRawValue(void) {
@@ -164,11 +182,27 @@ int ModbusTag::updateCycleId(void) {
 }
 
 void ModbusTag::setNoreadValue(float newValue) {
-	_noread = newValue;
+	_noreadvalue = newValue;
 }
 
 float ModbusTag::getNoreadValue(void) {
-	return _noread;
+	return _noreadvalue;
+}
+
+void ModbusTag::setNoreadAction(int newValue) {
+	_noreadaction = newValue;
+}
+	
+int ModbusTag::getNoreadAction(void) {
+	return _noreadaction;
+}
+	
+void ModbusTag::setNoreadIgnore(int newValue) {
+	_noreadignore = newValue;
+}
+	
+int ModbusTag::getNoreadIgnore(void) {
+	return _noreadignore;
 }
 
 bool ModbusTag::setDataType(char newType) {

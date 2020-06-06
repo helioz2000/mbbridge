@@ -84,11 +84,11 @@ void mqtt_connection_status(bool status);
 void mqtt_topic_update(const char* topic, const char* value);
 void mqtt_subscribe_tags(void);
 void setMainLoopInterval(int newValue);
-bool modbus_read_tag(ModbusTag tag);
+bool modbus_read_tag(ModbusTag *tag);
 bool modbus_read_holding_registers(int slaveId, modbus_t *ctx, int addr, int nb, uint16_t *dest);
-bool modbus_write_tag(ModbusTag tag);
+bool modbus_write_tag(ModbusTag *tag);
 void modbus_write_request(int callbackId, Tag *tag);
-bool mqtt_publish_tag(ModbusTag tag, bool noread = false);
+bool mqtt_publish_tag(ModbusTag *tag);
 
 TagStore ts;
 MQTT mqtt;
@@ -265,7 +265,7 @@ bool modbus_write_process() {
 	while ((slaveId >= MODBUS_SLAVE_MIN) && (slaveId <= MODBUS_SLAVE_MAX)) {
 		if (mbWriteTags[idx].getWritePending()) {
 			//printf ("%s - writing %d to Slave %d Addr %d idx %d\n", __func__, mbWriteTags[idx].getRawValue(),slaveId, mbWriteTags[idx].getAddress(), idx);
-			modbus_write_tag(mbWriteTags[idx]);
+			modbus_write_tag(&mbWriteTags[idx]);
 			mbWriteTags[idx].setWritePending(false);	// mark as write done
 			return true;			// end here, we only do one write
 			}
@@ -286,23 +286,24 @@ bool modbus_write_process() {
  * @returns true if group of tags have been read, false if tag is not in a group or a failure has occured
  */
 bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
-	ModbusTag t = mbReadTags[tagArray[arrayIndex]];
+	ModbusTag *t = &mbReadTags[tagArray[arrayIndex]];
 	ModbusTag tag;
 	ModbusTag *tp;
 	uint16_t *mbReadRegisters;
-	int slaveId, addr, addrRange, addrLo=99999, addrHi=0, addrCount = 0, group = t.getGroup();
+	int slaveId, addr, addrRange, addrLo=99999, addrHi=0, addrCount = 0, group = t->getGroup();
 	int i, r, tagArraySize;
+	bool noread = false;
 	// if tag is not part of a group then return false
 	if (group < 1) return false;
 	// if tag has already been read in this cycle the reference time will match
-	if (t.getReferenceTime() == refTime) {
+	if (t->getReferenceTime() == refTime) {
 		//tag value is up-to-date, we can to publish the tag
 		//printf("%s: already updated #%d [%d], publishing value %d\n", __func__, t.getSlaveId(), t.getAddress(), t.getRawValue());
 		mqtt_publish_tag(t);
 		return true;
 		}
 	// the tag is part of a group which has not been read in this cycle
-	slaveId = t.getSlaveId();
+	slaveId = t->getSlaveId();
 	// assemble tag indexes which belong to same group and slave into one array
 	i = 0;
 	//printf("%s: reading [%d]=%d tagArray: ", __func__, t.getAddress(), t.getRawValue());
@@ -337,8 +338,7 @@ bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	// read all tags in this group (multi read)
 	if (!modbus_read_holding_registers(slaveId, mb_ctx, addrLo, addrRange, mbReadRegisters)) {
 		//printf("%s: modbus_read_holding_registers failed\n", __func__);
-		delete [] mbReadRegisters;
-		return false;
+		noread = true;	// mark this as a failed read
 	} else {
 		usleep(modbusinterslavedelay);
 	}
@@ -352,9 +352,13 @@ bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 			tp = &mbReadTags[tagArray[i]];	// need to use pointer so we can modify original
 			// find matching address in tagArray
 			if (addr == tp->getAddress()) {				// tag matches address
-				tp->setRawValue(mbReadRegisters[r]);	// update tag with register value
-				tp->setReferenceTime(refTime);			// update tag reference time
-				//printf("%s: updating #%d [%d]=%d\n", __func__, slaveId, addr, mbReadRegisters[r]);
+				if (noread) {
+					tp->noreadNotify();	// notify tag of noread event
+				} else {
+					tp->setRawValue(mbReadRegisters[r]);	// update tag with register value
+					tp->setReferenceTime(refTime);			// update tag reference time
+					//printf("%s: updating #%d [%d]=%d\n", __func__, slaveId, addr, mbReadRegisters[r]);
+				}
 				break;									// stop iterating through tagArray
 			}
 			// it is possible that the address is not found in the tagArray as the multi read
@@ -366,6 +370,7 @@ bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	// publish only the one tag referenced in parameters
 	mqtt_publish_tag(t);
 	delete [] mbReadRegisters;
+	if (noread) return false;
 	return true;	// indicate that tag has been processed
 }
 
@@ -398,7 +403,7 @@ bool modbus_read_process() {
 				// if tag is not part of a group ....
 				if (!modbus_read_multi_tags(tagArray, tagIndex, refTime))
 					// perform single tag read
-					modbus_read_tag(mbReadTags[tagArray[tagIndex]]);
+					modbus_read_tag(&mbReadTags[tagArray[tagIndex]]);
 				tagIndex++;
 				usleep(modbusinterslavedelay);
 			}
@@ -611,16 +616,31 @@ void mqtt_topic_update(const char* topic, const char* value) {
 /**
  * Publish tag to MQTT
  * @param tag: ModbusTag to publish
- * @param noread: publish the "noread" value (for failed read)
+ * 
  */
-bool mqtt_publish_tag(ModbusTag tag, bool noread) {
+bool mqtt_publish_tag(ModbusTag *tag) {
 	if (!mqtt.isConnected()) return false;
-	if (tag.getTopicString().empty()) return true;	// don't publish if topic is empty
-	if (noread) {
-		mqtt.publish(tag.getTopic(), tag.getFormat(), tag.getNoreadValue(), tag.getRetain());
-	} else {
-		mqtt.publish(tag.getTopic(), tag.getFormat(), tag.getScaledValue(), tag.getRetain());
+	if (tag->getTopicString().empty()) return true;	// don't publish if topic is empty
+	// Publish value if read was OK
+	if (!tag->isNoread()) {
+		mqtt.publish(tag->getTopic(), tag->getFormat(), tag->getScaledValue(), tag->getRetain());
+		return true;
 	}
+	// Handle Noread
+	if (!tag->noReadIgnoreExceeded()) return true;		// ignore noread, do nothing
+	// noreadignore is exceeded, need to take action
+	switch (tag->getNoreadAction()) {
+	case 0:	// publish null value
+		mqtt.clear_retained_message(tag->getTopic());
+		break;
+	case 1:	// publish noread value
+		mqtt.publish(tag->getTopic(), tag->getFormat(), tag->getNoreadValue(), tag->getRetain());
+		break;
+	default:
+		// do nothing (default, -1)
+		break;
+	}
+	
 	return true;
 }
 
@@ -630,11 +650,13 @@ bool mqtt_publish_tag(ModbusTag tag, bool noread) {
  * @param clear_retain: clear retained value from broker's persistance store
  */
 void mqtt_clear_tags(bool publish_noread = true, bool clear_retain = true) {
+
 	int index = 0, tagIndex = 0;
 	int *tagArray;
 	ModbusTag mbTag;
 	//printf("%s", __func__);
 	
+	// Iterate over modbus array
 	//mqtt.setRetain(false);
 	while (updateCycles[index].ident >= 0) {
 		// ignore if cycle has no tags to process
@@ -648,12 +670,22 @@ void mqtt_clear_tags(bool publish_noread = true, bool clear_retain = true) {
 		while (tagArray[tagIndex] >= 0) {
 			mbTag = mbReadTags[tagArray[tagIndex]];
 			if (publish_noread)
-				mqtt_publish_tag(mbTag, true);			// publish noread value
+				mqtt.publish(mbTag.getTopic(), mbTag.getFormat(), mbTag.getNoreadValue(), mbTag.getRetain());
+				//mqtt_publish_tag(mbTag, true);			// publish noread value
 			if (clear_retain)
 				mqtt.clear_retained_message(mbTag.getTopic());	// clear retained status
 			tagIndex++;
 		}
 		index++;
+	}	// while 
+
+	// Iterate over local tags (e.g. CPU temp)
+	Tag *tag = ts.getFirstTag();
+	while (tag != NULL) {
+		if (tag->isPublish()) {
+			mqtt.clear_retained_message(tag->getTopic());
+		}
+		tag = ts.getNextTag();
 	}
 }
 
@@ -703,28 +735,28 @@ void modbus_write_request(int callbackId, Tag *tag) {
 /**
  * Write tag to modbus device
  */
-bool modbus_write_tag(ModbusTag tag) {
+bool modbus_write_tag(ModbusTag *tag) {
 	int rc = 0;
 	
-	uint8_t slaveId = tag.getSlaveId();
+	uint8_t slaveId = tag->getSlaveId();
 	if (modbusDebugLevel > 0)
-		printf ("%s - writing %d to Slave %d Addr %d\n", __func__, tag.getRawValue(),slaveId, tag.getAddress());
+		printf ("%s - writing %d to Slave %d Addr %d\n", __func__, tag->getRawValue(),slaveId, tag->getAddress());
 	modbus_set_slave(mb_ctx, slaveId);
-	if (tag.getDataType() == 'r') {
-		rc = modbus_write_register(mb_ctx, tag.getAddress(), tag.getRawValue());
+	if (tag->getDataType() == 'r') {
+		rc = modbus_write_register(mb_ctx, tag->getAddress(), tag->getRawValue());
 	} else {
-		rc = modbus_write_bit(mb_ctx, tag.getAddress(), tag.getBoolValue());
+		rc = modbus_write_bit(mb_ctx, tag->getAddress(), tag->getBoolValue());
 	}
 	if (rc != 1) {
 		if (errno == 110) {		//timeout
 			if (!runningAsDaemon) {
-				printf("%s - failed: no response from slave %d addr %d (timeout)\n", __func__, slaveId, tag.getAddress()); 
+				printf("%s - failed: no response from slave %d addr %d (timeout)\n", __func__, slaveId, tag->getAddress()); 
 				}
 			modbus_slave_set_online_status(slaveId, false);
 		} 
 		if (errno == 0x6b24250) {	// Illegal Data Address
 			if (!runningAsDaemon)
-				printf("%s - failed: illegal data address %d on slave %d\n", __func__, tag.getAddress(), slaveId);
+				printf("%s - failed: illegal data address %d on slave %d\n", __func__, tag->getAddress(), slaveId);
 		}
 		log(LOG_ERR, "Modbus Write failed (%x): %s", errno, modbus_strerror(errno));
 		return false;
@@ -732,7 +764,7 @@ bool modbus_write_tag(ModbusTag tag) {
 		// successful read
 		modbus_slave_set_online_status(slaveId, true);
 		if (modbusDebugLevel > 0) 
-			printf("%s - write success, value = %d [0x%04x]\n", __func__, tag.getRawValue(), tag.getRawValue());
+			printf("%s - write success, value = %d [0x%04x]\n", __func__, tag->getRawValue(), tag->getRawValue());
 	}
 	return true;
 }
@@ -792,19 +824,19 @@ retry:
  * Read single tag from modbus device
  * @returns: true if successful read
  */
-bool modbus_read_tag(ModbusTag tag) {
+bool modbus_read_tag(ModbusTag *tag) {
 	uint16_t registers[4];
 	bool retVal;
 
-	uint8_t slaveId = tag.getSlaveId();
+	uint8_t slaveId = tag->getSlaveId();
 		
-	retVal = modbus_read_holding_registers(slaveId, mb_ctx, tag.getAddress(), 1, registers);
+	retVal = modbus_read_holding_registers(slaveId, mb_ctx, tag->getAddress(), 1, registers);
 	if (retVal) {
-		tag.setRawValue(registers[0]);
-		mqtt_publish_tag(tag);
+		tag->setRawValue(registers[0]);
 	} else {
-		mqtt_publish_tag(tag, true);	// publish noread value for failed read
+		tag->noreadNotify();
 	}
+	mqtt_publish_tag(tag);
 	return retVal;
 }
 
@@ -914,8 +946,12 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 				mbReadTags[mbTagCount].setMultiplier(fValue);
 			if (mbTagsSettings[tagIndex].lookupValue("offset", fValue))
 				mbReadTags[mbTagCount].setOffset(fValue);
-			if (mbTagsSettings[tagIndex].lookupValue("noread", fValue))
+			if (mbTagsSettings[tagIndex].lookupValue("noreadvalue", fValue))
 				mbReadTags[mbTagCount].setNoreadValue(fValue);
+			if (mbTagsSettings[tagIndex].lookupValue("noreadaction", intValue))
+				mbReadTags[mbTagCount].setNoreadAction(intValue);
+			if (mbTagsSettings[tagIndex].lookupValue("noreadignore", intValue))
+				mbReadTags[mbTagCount].setNoreadIgnore(intValue);
 		}
 		mbTagCount++;
 		//cout << "Tag " << mbTagCount << " addr: " << tagAddress << " cycle: " << tagUpdateCycle << " Topic: " << tagTopic << endl;

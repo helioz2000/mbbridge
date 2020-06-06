@@ -34,6 +34,22 @@ public:
     ~ModbusTag();
 
 	/**
+	 * Notification for noread occurence
+	 */
+	void noreadNotify(void);
+	
+	/**
+	 * Get tag noread status
+	 */
+	bool isNoread(void);
+	 
+	/**
+	 * Is noreadignore exceeded
+	 */
+	bool noReadIgnoreExceeded(void);
+	
+	
+	/**
 	* Set the address
 	* @param address: the new address
 	*/
@@ -164,14 +180,34 @@ public:
 	void setOffset(float);
 	
 	/**
-	* Set noread
+	* Set noread value
 	*/
 	void setNoreadValue(float);
 	
 	/**
-	 * Get noread
+	 * Get noread value
 	*/
 	float getNoreadValue(void);
+	
+	/**
+	* Set noread action
+	*/
+	void setNoreadAction(int);
+	
+	/**
+	 * Get noread action
+	*/
+	int getNoreadAction(void);
+	
+	/**
+	* Set noread ignore
+	*/
+	void setNoreadIgnore(int);
+	
+	/**
+	 * Get noread ignore
+	*/
+	int getNoreadIgnore(void);
 	
 	/**
 	 * Set data type
@@ -230,7 +266,10 @@ private:
 	bool _writePending;				// value needs to be written to slave
 	float _multiplier;				// multiplier for scaled value
 	float _offset;					// offset for scaled value
-	float _noread;					// value to publish when read fails
+	float _noreadvalue;					// value to publish when read fails
+	int _noreadaction;				// action to take on noread
+	int _noreadignore;				// number of noreads to ignore before noreadaction
+	int _noreadcount;				// noread counter
 	uint8_t	_slaveId;				// modbus address of slave
 	uint16_t _address;				// the address of the modbus tag in the slave
 	int	_group;						// group tags for single read
@@ -239,6 +278,7 @@ private:
 	time_t _lastUpdateTime;			// last update time (change of value)
 	char _dataType;					// i = input, q = output, r = register
 	time_t _referenceTime;			// time to be used externally only
+	
 };
 
 
