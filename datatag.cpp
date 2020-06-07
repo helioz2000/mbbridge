@@ -111,7 +111,8 @@ Tag::Tag(const char *topicStr) {
     _valueUpdate = NULL;
     _valueUpdateID = -1;
     _publish = false;        // subscribe tag
-    _retain = false;
+    _publishRetain = false;
+    _valueIsRetained = false;
     //cout << topic << endl;
     _topicCRC = gen_crc16(_topic.data(), _topic.length());
     //cout << topicCRC << endl;
@@ -214,12 +215,20 @@ void Tag::setSubscribe(void) {
     _publish = false;
 }
 
-void Tag::setRetain(bool newRetain) {
-    _retain = newRetain;
+void Tag::setPublishRetain(bool newRetain) {
+    _publishRetain = newRetain;
 }
 
-bool Tag::getRetain(void) {
-    return _retain;
+bool Tag::getPublishRetain(void) {
+    return _publishRetain;
+}
+
+void Tag::setValueIsRetained(bool newValue) {
+	_valueIsRetained = newValue;
+}
+
+bool Tag::getValueIsRetained(void) {
+	return _valueIsRetained;
 }
 
 void Tag::setType(tag_type_t newType) {

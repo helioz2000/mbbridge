@@ -129,12 +129,12 @@ public:
     /**
      * assign mqtt retain value
      */
-    void setRetain(bool newRetain);
+    void setPublishRetain(bool newRetain);
 
     /**
      * get mqtt retain value
      */
-    bool getRetain(void);
+    bool getPublishRetain(void);
 
     /**
      * is tag "publish"
@@ -158,6 +158,12 @@ public:
      */
     void setSubscribe(void);
 
+	/**
+	 * Setter/Getter tag to ignore write when value was pushished with retain=1
+	 */
+	void setIgnoreRetained(bool newValue);
+	bool getIgnoreRetained(void);
+	
 	/**
 	* Get the format string
 	* @return the format string
@@ -264,9 +270,10 @@ private:
 	bool _publish_retain;           // publish with or without retain
 	bool _write;					// true for write tag, false for read tag
 	bool _writePending;				// value needs to be written to slave
+	bool _ignoreRetained;			// do not write retained value to slave
 	float _multiplier;				// multiplier for scaled value
 	float _offset;					// offset for scaled value
-	float _noreadvalue;					// value to publish when read fails
+	float _noreadvalue;				// value to publish when read fails
 	int _noreadaction;				// action to take on noread
 	int _noreadignore;				// number of noreads to ignore before noreadaction
 	int _noreadcount;				// noread counter

@@ -37,6 +37,21 @@
 using namespace std;
 
 /*********************
+ *  MOSQUITTO INFORMATION
+ *********************
+ *
+struct mosquitto_message{
+	int mid;
+	char *topic;
+	void *payload;
+	int payloadlen;
+	int qos;
+	bool retain;
+};
+ */
+
+
+/*********************
  *  GLOBAL FUNCTIONS
  *********************
  *
@@ -173,7 +188,7 @@ void MQTT::registerConnectionCallback(void (*callback) (bool)) {
     connectionStatusCallback = callback;
 }
 
-void MQTT::registerTopicUpdateCallback(void (*callback) (const char*, const char*)) {
+void MQTT::registerTopicUpdateCallback(void (*callback) (const struct mosquitto_message*)) {
     topicUpdateCallback = callback;
 }
 
@@ -276,8 +291,8 @@ void MQTT::message_callback(struct mosquitto *m, const struct mosquitto_message 
 	}
 	*/
 	if (topicUpdateCallback != NULL) {
-		(*topicUpdateCallback) (message->topic, (const char *)message->payload);
-		//fprintf(stderr, "%s - topicUpdateCallback done\n", __func__);
+		(*topicUpdateCallback) (message);
+		//fprintf(stderr, "%s - topicUpdateCallback done %s\n", __func__, message->topic);
 	}
 //	else {
 //		fprintf(stderr, "%s - topicUpdateCallback is NULL\n", __func__);

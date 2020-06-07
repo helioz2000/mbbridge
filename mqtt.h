@@ -54,7 +54,7 @@ public:
     /**
      * register callback for topic update
      */
-    void registerTopicUpdateCallback(void (*callback) (const char*, const char*));
+    void registerTopicUpdateCallback(void (*callback) (const struct mosquitto_message*));
 
     /**
      * callback function for async connect
@@ -172,7 +172,7 @@ public:
 
 private:
     void (*connectionStatusCallback) (bool);     // callback for connection status change
-    void (*topicUpdateCallback) (const char *topic, const char *value);     // callback for topic update
+    void (*topicUpdateCallback) (const struct mosquitto_message*);     // callback for topic update
     void _construct (const char* clientID);
 
     struct mosquitto *_mosq;

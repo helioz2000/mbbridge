@@ -81,7 +81,7 @@ bool mbSlaveOnline[MODBUS_SLAVE_MAX+1];			// array to store online/offline statu
 #pragma mark Proto types
 void subscribe_tags(void);
 void mqtt_connection_status(bool status);
-void mqtt_topic_update(const char* topic, const char* value);
+void mqtt_topic_update(const struct mosquitto_message *message);
 void mqtt_subscribe_tags(void);
 void setMainLoopInterval(int newValue);
 bool modbus_read_tag(ModbusTag *tag);
@@ -241,7 +241,7 @@ bool var_process(void) {
 		// publish time due ?
 		if (tag->nextPublishTime <= now) {
 			if (mqtt.isConnected()) {
-				mqtt.publish(tag->getTopic(), "%.1f", tag->floatValue(), tag->getRetain() );
+				mqtt.publish(tag->getTopic(), "%.1f", tag->floatValue(), tag->getPublishRetain() );
 				retval = true;
 			}
 			tag->nextPublishTime = now + tag->publishInterval;
@@ -488,6 +488,7 @@ bool init_tags(void) {
 	Tag* tp = NULL;
 	std::string strValue;
 	int numTags, iVal, i;
+	bool bVal;
 
 	if (!init_hwtags()) return false;
 	if (!cfg.exists("mqtt_tags")) {	// optional
@@ -508,6 +509,8 @@ bool init_tags(void) {
 				mbWriteTags[i].setSlaveId(iVal);
 			if (mqttTagsSettings[i].lookupValue("address", iVal))
 				mbWriteTags[i].setAddress(iVal);
+			if (mqttTagsSettings[i].lookupValue("ignoreretained", bVal))
+				mbWriteTags[i].setIgnoreRetained(bVal);
 			if (mqttTagsSettings[i].exists("datatype")) {
 				mqttTagsSettings[i].lookupValue("datatype", strValue);
 				//printf("%s - %s\n", __func__, strValue.c_str());
@@ -603,14 +606,15 @@ void mqtt_connection_status(bool status) {
  * Note: do not store the pointers "topic" & "value", they will be
  * destroyed after this function returns
  */
-void mqtt_topic_update(const char* topic, const char* value) {
+void mqtt_topic_update(const struct mosquitto_message *message) {
 	//printf("%s - %s %s\n", __func__, topic, value);
-	Tag *tp = ts.getTag(topic);
+	Tag *tp = ts.getTag(message->topic);
 	if (tp == NULL) {
-		fprintf(stderr, "%s: <%s> not  in ts\n", __func__, topic);
-		return;
+		fprintf(stderr, "%s: <%s> not  in ts\n", __func__, message->topic);
+	} else {
+		tp->setValueIsRetained(message->retain);
+		tp->setValue((const char*)message->payload);	// This will trigger a callback to modbus_write_request
 	}
-	tp->setValue(value);	// This will trigger a callback to modbus_write_request
 }
 
 /**
@@ -623,7 +627,7 @@ bool mqtt_publish_tag(ModbusTag *tag) {
 	if (tag->getTopicString().empty()) return true;	// don't publish if topic is empty
 	// Publish value if read was OK
 	if (!tag->isNoread()) {
-		mqtt.publish(tag->getTopic(), tag->getFormat(), tag->getScaledValue(), tag->getRetain());
+		mqtt.publish(tag->getTopic(), tag->getFormat(), tag->getScaledValue(), tag->getPublishRetain());
 		return true;
 	}
 	// Handle Noread
@@ -634,7 +638,7 @@ bool mqtt_publish_tag(ModbusTag *tag) {
 		mqtt.clear_retained_message(tag->getTopic());
 		break;
 	case 1:	// publish noread value
-		mqtt.publish(tag->getTopic(), tag->getFormat(), tag->getNoreadValue(), tag->getRetain());
+		mqtt.publish(tag->getTopic(), tag->getFormat(), tag->getNoreadValue(), tag->getPublishRetain());
 		break;
 	default:
 		// do nothing (default, -1)
@@ -670,7 +674,7 @@ void mqtt_clear_tags(bool publish_noread = true, bool clear_retain = true) {
 		while (tagArray[tagIndex] >= 0) {
 			mbTag = mbReadTags[tagArray[tagIndex]];
 			if (publish_noread)
-				mqtt.publish(mbTag.getTopic(), mbTag.getFormat(), mbTag.getNoreadValue(), mbTag.getRetain());
+				mqtt.publish(mbTag.getTopic(), mbTag.getFormat(), mbTag.getNoreadValue(), mbTag.getPublishRetain());
 				//mqtt_publish_tag(mbTag, true);			// publish noread value
 			if (clear_retain)
 				mqtt.clear_retained_message(mbTag.getTopic());	// clear retained status
@@ -725,6 +729,8 @@ void modbus_slave_set_online_status (int slaveId, bool newStatus, bool forceRepo
  * the request is added to the list of write requests
  */
 void modbus_write_request(int callbackId, Tag *tag) {
+	// If tag is retained value and retained values are to be ignored then abort
+	if (tag->getValueIsRetained() && mbWriteTags[callbackId].getIgnoreRetained()) return;
 	// update value in tag array
 	mbWriteTags[callbackId].setRawValue(tag->intValue());
 	// set write request on tag
@@ -939,7 +945,7 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 		if (mbTagsSettings[tagIndex].lookupValue("topic", strValue)) {
 			mbReadTags[mbTagCount].setTopic(strValue.c_str());
 			if (mbTagsSettings[tagIndex].lookupValue("retain", bValue))
-				mbReadTags[mbTagCount].setRetain(bValue);
+				mbReadTags[mbTagCount].setPublishRetain(bValue);
 			if (mbTagsSettings[tagIndex].lookupValue("format", strValue))
 				mbReadTags[mbTagCount].setFormat(strValue.c_str());
 			if (mbTagsSettings[tagIndex].lookupValue("multiplier", fValue))

@@ -54,6 +54,7 @@ ModbusTag::ModbusTag() {
 	this->_noreadignore = 0;
 	this->_noreadcount = 0;
 	this->_writePending = false;
+	this->_ignoreRetained = false;
 	this->_dataType = 'r';
 	this->_referenceTime = 0;
 	//printf("%s - constructor %d %s\\", __func__, this->_slaveId, this->_topic.c_str());
@@ -115,13 +116,22 @@ std::string ModbusTag::getTopicString(void) {
 	return _topic;
 }
 
-void ModbusTag::setRetain(bool newRetain) {
+void ModbusTag::setPublishRetain(bool newRetain) {
     _publish_retain = newRetain;
 }
 
-bool ModbusTag::getRetain(void) {
+bool ModbusTag::getPublishRetain(void) {
     return _publish_retain;
 }
+
+void ModbusTag::setIgnoreRetained(bool newValue) {
+	_ignoreRetained = newValue;
+}
+
+bool ModbusTag::getIgnoreRetained(void) {
+	return _ignoreRetained;
+}
+
 
 void ModbusTag::setFormat(const char *formatStr) {
 	if (formatStr != NULL) {

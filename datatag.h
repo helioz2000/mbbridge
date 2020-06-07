@@ -157,13 +157,20 @@ public:
     /**
      * assign mqtt retain value
      */
-    void setRetain(bool newRetain);
+    void setPublishRetain(bool newRetain);
 
     /**
      * get mqtt retain value
      */
-    bool getRetain(void);
-    
+    bool getPublishRetain(void);
+
+
+	/**
+	 * set value is retained
+	 */
+	void setValueIsRetained(bool newValue);
+	bool getValueIsRetained(void);
+
     /**
      * Set tag type (see tag_type_t)
      */
@@ -182,23 +189,24 @@ public:
     time_t nextPublishTime;             // next publish time
 
 private:
-    // All properties of this class are private
-    // Use setters & getters to access these values
-    std::string _topic;                  // storage for topic path
-    uint16_t _topicCRC;                  // CRC on topic path
-    double _topicDoubleValue;            // storage numeric value
-    time_t _lastUpdateTime;              // last update time (change of value)
-    void (*_valueUpdate) (int,Tag*);     // callback for value update
-    int _valueUpdateID;                  // ID for value update
-    bool _publish;                       // true = we publish, false = we subscribe
-    bool _retain;                        // mqtt publish retain
-    tag_type_t _type;                    // data type
+	// All properties of this class are private
+	// Use setters & getters to access these values
+	std::string _topic;					// storage for topic path
+	uint16_t _topicCRC;					// CRC on topic path
+	double _topicDoubleValue;			// storage numeric value
+	time_t _lastUpdateTime;				// last update time (change of value)
+	void (*_valueUpdate) (int,Tag*);	// callback for value update
+	int _valueUpdateID;					// ID for value update
+	bool _publish;						// true = we publish, false = we subscribe
+	bool _publishRetain;				// mqtt publish retain
+	bool _valueIsRetained;				// indicate that the current value is retained
+	tag_type_t _type;					// data type
 };
 
 class TagStore {
 public:
-    TagStore();
-    ~TagStore();
+	TagStore();
+	~TagStore();
 
     /**
      * Add a tag
