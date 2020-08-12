@@ -7,7 +7,7 @@ Type=simple
 ExecStartPre=/bin/sleep 5
 ExecStart=/usr/local/sbin/mbbridge -c/etc/mbbridge
 WorkingDirectory=/root
-Restart=no
+Restart=always
 RestartSec=30
 User=root
 
