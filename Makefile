@@ -14,8 +14,11 @@ INC += -I$(DESTDIR)$(PREFIX)/include/modbuspp -I$(DESTDIR)$(PREFIX)/include/modb
 
 CC=gcc
 CXX=g++
-CFLAGS = -Wall -Wshadow -Wundef -Wmaybe-uninitialized -Wno-unknown-pragmas
-CFLAGS += -O3 -g3 $(INC)
+CFLAGS = -Wall -Wshadow -Wundef -Wmaybe-uninitialized -Wno-unknown-pragmas $(INC) 
+# enable optimizing for release:
+CFLAGS += -O3
+#enable debug symbols:
+#CFLAGS += -g
 
 # directory for local libs
 LDFLAGS = -L$(DESTDIR)$(PREFIX)/lib
@@ -73,7 +76,7 @@ install:
 
 # make systemd service
 service:
-	install -o root $(SERVICE) $(SERVICEDIR)
+	install -m644 -o root $(SERVICE) $(SERVICEDIR)
 	@systemctl daemon-reload
 	@systemctl enable mbbridge.service
 	@echo $(BIN) is now available a systemd service
