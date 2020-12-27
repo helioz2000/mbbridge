@@ -94,7 +94,7 @@ uint8_t ModbusTag::getSlaveId(void) {
 	return _slaveId;
 }
 
-void ModbusTag::setAddress(int newAddress) {
+void ModbusTag::setAddress(uint16_t newAddress) {
 	_address = newAddress;
 }
 

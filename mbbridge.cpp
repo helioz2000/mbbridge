@@ -40,7 +40,7 @@ using namespace libconfig;
 
 const char *build_date_str = __DATE__ " " __TIME__;
 const int version_major = 1;
-const int version_minor = 01;
+const int version_minor = 02;
 
 #define CFG_FILENAME_EXT ".cfg"
 #define CFG_DEFAULT_FILEPATH "/etc/"
@@ -59,6 +59,7 @@ static string mbSlaveStatusTopic;
 bool exitSignal = false;
 bool debugEnabled = false;
 int modbusDebugLevel = 0;
+bool modbusAddressBase = 0;		// should be 1 for 1-based register addressing
 bool mqttDebugEnabled = false;
 bool runningAsDaemon = false;
 time_t mqtt_connect_time = 0;		// time the connection was initiated
@@ -87,10 +88,10 @@ void mqtt_connection_status(bool status);
 void mqtt_topic_update(const struct mosquitto_message *message);
 void mqtt_subscribe_tags(void);
 void setMainLoopInterval(int newValue);
-bool modbus_read_tag(ModbusTag *tag);
-bool modbus_read_holding_registers(int slaveId, modbus_t *ctx, int addr, int nb, uint16_t *dest);
-bool modbus_write_tag(ModbusTag *tag);
-void modbus_write_request(int callbackId, Tag *tag);
+bool mb_read_tag(ModbusTag *tag);
+bool mb_read_registers(int slaveId, modbus_t *ctx, uint16_t addr, int nb, uint16_t *dest);
+bool mb_write_tag(ModbusTag *tag);
+void mb_write_request(int callbackId, Tag *tag);
 bool mqtt_publish_tag(ModbusTag *tag);
 
 TagStore ts;
@@ -268,7 +269,7 @@ bool modbus_write_process() {
 	while ((slaveId >= MODBUS_SLAVE_MIN) && (slaveId <= MODBUS_SLAVE_MAX)) {
 		if (mbWriteTags[idx].getWritePending()) {
 			//printf ("%s - writing %d to Slave %d Addr %d idx %d\n", __func__, mbWriteTags[idx].getRawValue(),slaveId, mbWriteTags[idx].getAddress(), idx);
-			modbus_write_tag(&mbWriteTags[idx]);
+			mb_write_tag(&mbWriteTags[idx]);
 			mbWriteTags[idx].setWritePending(false);	// mark as write done
 			return true;			// end here, we only do one write
 			}
@@ -288,7 +289,7 @@ bool modbus_write_process() {
  * @param refTime: time reference to identify already read tags
  * @returns true if group of tags have been read, false if tag is not in a group or a failure has occured
  */
-bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
+bool mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	ModbusTag *t = &mbReadTags[tagArray[arrayIndex]];
 	ModbusTag tag;
 	ModbusTag *tp;
@@ -302,7 +303,8 @@ bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	if (t->getReferenceTime() == refTime) {
 		//tag value is up-to-date, we can to publish the tag
 		//printf("%s: already updated #%d [%d], publishing value %d\n", __func__, t.getSlaveId(), t.getAddress(), t.getRawValue());
-		mqtt_publish_tag(t);
+		if (!t->isNoread())
+			mqtt_publish_tag(t);
 		return true;
 		}
 	// the tag is part of a group which has not been read in this cycle
@@ -339,8 +341,8 @@ bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	mbReadRegisters = new uint16_t[addrRange];
 	
 	// read all tags in this group (multi read)
-	if (!modbus_read_holding_registers(slaveId, mb_ctx, addrLo, addrRange, mbReadRegisters)) {
-		//printf("%s: modbus_read_holding_registers failed\n", __func__);
+	if (!mb_read_registers(slaveId, mb_ctx, addrLo, addrRange, mbReadRegisters)) {
+		//printf("%s: mb_read_registers failed\n", __func__);
 		noread = true;	// mark this as a failed read
 	} else {
 		usleep(modbusinterslavedelay);
@@ -359,9 +361,9 @@ bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 					tp->noreadNotify();	// notify tag of noread event
 				} else {
 					tp->setRawValue(mbReadRegisters[r]);	// update tag with register value
-					tp->setReferenceTime(refTime);			// update tag reference time
 					//printf("%s: updating #%d [%d]=%d\n", __func__, slaveId, addr, mbReadRegisters[r]);
 				}
+				tp->setReferenceTime(refTime);			// update tag reference time
 				break;									// stop iterating through tagArray
 			}
 			// it is possible that the address is not found in the tagArray as the multi read
@@ -381,11 +383,12 @@ bool modbus_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
  * process modbus cyclic read update
  * @return false if there was nothing to process, otherwise true
  */
-bool modbus_read_process() {
+bool mb_read_process() {
 	int index = 0;
 	int tagIndex = 0;
 	int *tagArray;
 	bool retval = false;
+	bool readsuccess = false;
 	time_t now = time(NULL);
 	time_t refTime;
 	while (updateCycles[index].ident >= 0) {
@@ -403,12 +406,13 @@ bool modbus_read_process() {
 			// read each tag in the array
 			tagIndex = 0;
 			while (tagArray[tagIndex] >= 0) {
-				// if tag is not part of a group ....
-				if (!modbus_read_multi_tags(tagArray, tagIndex, refTime))
-					// perform single tag read
-					modbus_read_tag(&mbReadTags[tagArray[tagIndex]]);
+				if ((&mbReadTags[tagArray[tagIndex]])->getGroup() < 1) {		// if tag is not part of a group
+					readsuccess = mb_read_tag(&mbReadTags[tagArray[tagIndex]]);	// perform single tag read
+				} else {
+					readsuccess = mb_read_multi_tags(tagArray, tagIndex, refTime);	// multi tag read
+				}
 				tagIndex++;
-				usleep(modbusinterslavedelay);
+				if (readsuccess) usleep(modbusinterslavedelay);
 			}
 			retval = true;
 			//cout << now << " Update Cycle: " << updateCycles[index].ident << " - " << updateCycles[index].tagArraySize << " tags" << endl;
@@ -427,7 +431,7 @@ bool modbus_read_process() {
 bool process() {
 	bool retval = false;
 	if (mqtt.isConnected()) {
-		if (modbus_read_process()) retval = true;
+		if (mb_read_process()) retval = true;
 		if (modbus_write_process()) retval = true;
 	}
 	var_process();	// don't want it in time measuring, doesn't take up much time
@@ -506,7 +510,7 @@ bool init_tags(void) {
 		if (mqttTagsSettings[i].lookupValue("topic", strValue)) {
 			tp = ts.addTag(strValue.c_str());
 			tp->setSubscribe();
-			tp->registerCallback(modbus_write_request, i);
+			tp->registerCallback(mb_write_request, i);
 			mbWriteTags[i].setTopic(strValue.c_str());
 			if (mqttTagsSettings[i].lookupValue("slaveid", iVal))
 				mbWriteTags[i].setSlaveId(iVal);
@@ -622,7 +626,7 @@ void mqtt_topic_update(const struct mosquitto_message *message) {
 		fprintf(stderr, "%s: <%s> not  in ts\n", __func__, message->topic);
 	} else {
 		tp->setValueIsRetained(message->retain);
-		tp->setValue((const char*)message->payload);	// This will trigger a callback to modbus_write_request
+		tp->setValue((const char*)message->payload);	// This will trigger a callback to mb_write_request
 	}
 }
 
@@ -705,12 +709,25 @@ void mqtt_clear_tags(bool publish_noread = true, bool clear_retain = true) {
 #pragma mark Modbus
 
 /**
+ * Get the modbus object typr
+ * @param address: modbus address of the object
+ * @returns: -1=invalid, 0=Coil, 1=Discrete Input, 3=Input Register, 4=Holding Register
+ */
+int mb_register_type (uint16_t address) {
+	if ((address >= 0) && (address <= 9999)) return 0;		// Coil
+	if ((address >= 10000) && (address <= 19999)) return 1;	// DI
+	if ((address >= 30000) && (address <= 39999)) return 3;	// Input Reg
+	if ((address >= 40000) && (address <= 49999)) return 4;	// Holding Reg
+	return -1;
+}
+
+/**
  * Set and report slave online status to mqtt broker
  * @param slaveId: slave id to be changed
  * @param newStatus: true for online, false for offline
  * @param forceReport: publish report even if the status hasn't changed
  */
-void modbus_slave_set_online_status (int slaveId, bool newStatus, bool forceReport = false) {
+void mb_slave_set_online_status (int slaveId, bool newStatus, bool forceReport = false) {
 	string topic = mbSlaveStatusTopic;
 	// range check on slaveId
 	if ((slaveId > MODBUS_SLAVE_MAX) || (slaveId < MODBUS_SLAVE_MIN)) return;
@@ -737,7 +754,7 @@ void modbus_slave_set_online_status (int slaveId, bool newStatus, bool forceRepo
  * that is, when it's published by the broker
  * the request is added to the list of write requests
  */
-void modbus_write_request(int callbackId, Tag *tag) {
+void mb_write_request(int callbackId, Tag *tag) {
 	// If tag is retained value and retained values are to be ignored then abort
 	if (tag->getValueIsRetained() && mbWriteTags[callbackId].getIgnoreRetained()) return;
 	// update value in tag array
@@ -750,24 +767,39 @@ void modbus_write_request(int callbackId, Tag *tag) {
 /**
  * Write tag to modbus device
  */
-bool modbus_write_tag(ModbusTag *tag) {
-	int rc = 0;
+bool mb_write_tag(ModbusTag *tag) {
+	int rc = 0, addrtype;
+	uint16_t mbaddr;
 	
 	uint8_t slaveId = tag->getSlaveId();
 	if (modbusDebugLevel > 0)
 		printf ("%s - writing %d to Slave %d Addr %d\n", __func__, tag->getRawValue(),slaveId, tag->getAddress());
 	modbus_set_slave(mb_ctx, slaveId);
+	addrtype = mb_register_type(tag->getAddress());
+	if (addrtype < 0) return false;		// invalid register address type
+	switch (addrtype) {
+		case 0: mbaddr = tag->getAddress();
+			break;
+		case 1: mbaddr = tag->getAddress() - 10000;
+			break;
+		case 3: mbaddr = tag->getAddress() - 30000;
+			break;
+		case 4: mbaddr = tag->getAddress() - 40000;
+			break;
+		default:
+			return false;
+	}
 	if (tag->getDataType() == 'r') {
-		rc = modbus_write_register(mb_ctx, tag->getAddress(), tag->getRawValue());
+		rc = modbus_write_register(mb_ctx, mbaddr, tag->getRawValue());	// Modbus FC 6
 	} else {
-		rc = modbus_write_bit(mb_ctx, tag->getAddress(), tag->getBoolValue());
+		rc = modbus_write_bit(mb_ctx, mbaddr, tag->getBoolValue());		// Modbus FC 5
 	}
 	if (rc != 1) {
 		if (errno == 110) {		//timeout
 			if (!runningAsDaemon) {
 				printf("%s - failed: no response from slave %d addr %d (timeout)\n", __func__, slaveId, tag->getAddress()); 
 				}
-			modbus_slave_set_online_status(slaveId, false);
+			mb_slave_set_online_status(slaveId, false);
 		} 
 		if (errno == 0x6b24250) {	// Illegal Data Address
 			if (!runningAsDaemon)
@@ -777,7 +809,7 @@ bool modbus_write_tag(ModbusTag *tag) {
 		return false;
 	} else {
 		// successful read
-		modbus_slave_set_online_status(slaveId, true);
+		mb_slave_set_online_status(slaveId, true);
 		if (modbusDebugLevel > 0) 
 			printf("%s - write success, value = %d [0x%04x]\n", __func__, tag->getRawValue(), tag->getRawValue());
 	}
@@ -794,35 +826,70 @@ bool modbus_write_tag(ModbusTag *tag) {
  * @param nb: number of registers to read
  * @param dest: storage for read values
  */
-bool modbus_read_holding_registers(int slaveId, modbus_t *ctx, int addr, int nb, uint16_t *dest) {
+bool mb_read_registers(int slaveId, modbus_t *ctx, uint16_t addr, int nb, uint16_t *dest) {
 	bool retVal = false;
-	int i;
+	int i, regtype, rc;
+	uint16_t mbaddr;
 	int retrycount = 0;
 	if (modbusDebugLevel > 0)
 		printf ("%s - reading #%d HR %d qty %d\n", __func__, slaveId, addr, nb);
 	
 	modbus_set_slave(ctx, slaveId);
+	regtype = mb_register_type(addr);
+	if (regtype < 0) {
+		if (!runningAsDaemon)
+			printf("%s - Invalid address type (%d)\n", __func__, addr);
+		return retVal;
+		}
 retry:	
-	int rc = modbus_read_registers(ctx, addr, nb, dest);	// returns qty of registers read
+	// select correct modbus function for register type and subtract register type offset
+	switch (regtype) {
+		case 0: mbaddr = addr;
+			rc = modbus_read_bits(ctx, mbaddr, nb, (uint8_t*)dest);	//Modbus FC 1
+			break;
+		case 1: mbaddr = addr - 10000;
+			rc = modbus_read_input_bits(ctx, mbaddr, nb, (uint8_t*)dest);	//Modbus FC 2
+			break;
+		case 3: mbaddr = addr - 30000;
+			rc = modbus_read_input_registers(ctx, mbaddr, nb, dest);	// Modbus FC_4
+			break;
+		case 4: mbaddr = addr - 40000;
+			rc = modbus_read_registers(ctx, mbaddr, nb, dest);	// Modbus FC_3
+			break;
+		default:
+			if (!runningAsDaemon)
+				printf("%s - Invalid address type %d \n", __func__, addr);
+			return retVal;
+	}
+
 	if (rc != nb) {
-		log(LOG_ERR, "Modbus Read #%d failed (%x): %s", slaveId, errno, modbus_strerror(errno));
+		log(LOG_ERR, "Modbus Read #%d (Addr %u) failed (%x): %s", slaveId, addr, errno, modbus_strerror(errno));
 		// retry count reached ?
 		if (retrycount < mbMaxRetries) {
-			retrycount++;
-			goto retry;
+			if ( (errno == 110) ) {		// handle timeout error
+				if (mbSlaveOnline[slaveId])  {	//prevent retry if slave is already offline
+					retrycount++;
+					goto retry;
+				}
+			} else {	// handle all non-timeout errors
+				if (errno != 0x6b24250) {	// No retry for Illegal Data Address error
+					retrycount++;
+					goto retry;
+				}
+			}
 		}
 		if (errno == 110) {		//timeout
 			if (!runningAsDaemon)
 				printf("%s - failed: no response from slave %d (timeout) [%d]\n", __func__, slaveId, rc);
-			modbus_slave_set_online_status(slaveId, false);
+			mb_slave_set_online_status(slaveId, false);
 		} 
 		if (errno == 0x6b24250) {	// Illegal Data Address
 			if (!runningAsDaemon)
-				printf("%s - failed: illegal data address %d on slave %d\n", __func__, addr, slaveId);
+				printf("%s - failed: illegal data address %u on slave %d\n", __func__, addr, slaveId);
 		}
 	} else {
 		// successful read
-		modbus_slave_set_online_status(slaveId, true);
+		mb_slave_set_online_status(slaveId, true);
 		retVal = true;
 		if (modbusDebugLevel > 0) {
 			printf("%s - reading success, ", __func__);
@@ -839,13 +906,13 @@ retry:
  * Read single tag from modbus device
  * @returns: true if successful read
  */
-bool modbus_read_tag(ModbusTag *tag) {
+bool mb_read_tag(ModbusTag *tag) {
 	uint16_t registers[4];
 	bool retVal;
 
 	uint8_t slaveId = tag->getSlaveId();
 		
-	retVal = modbus_read_holding_registers(slaveId, mb_ctx, tag->getAddress(), 1, registers);
+	retVal = mb_read_registers(slaveId, mb_ctx, tag->getAddress(), 1, registers);
 	if (retVal) {
 		tag->setRawValue(registers[0]);
 	} else {
@@ -866,7 +933,7 @@ bool modbus_read_tag(ModbusTag *tag) {
  * 5) assign array to update cycle
  * 6) go back to 1) until all update cycles have been matched
  */
-bool modbus_assign_updatecycles () {
+bool mb_assign_updatecycles () {
 	int updidx = 0;
 	int mbTagIdx = 0;
 	int cycleIdent = 0;
@@ -922,9 +989,9 @@ bool modbus_assign_updatecycles () {
 /**
  * read tag configuration for one slave from config file
  */
-bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
+bool mb_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 	int tagIndex;
-	int tagAddress;
+	unsigned int tagAddress;
 	int tagUpdateCycle;
 	string strValue;
 	float fValue;
@@ -939,7 +1006,7 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 	
 	for (tagIndex = 0; tagIndex < numTags; tagIndex++) {
 		if (mbTagsSettings[tagIndex].lookupValue("address", tagAddress)) {
-			mbReadTags[mbTagCount].setAddress(tagAddress);
+			mbReadTags[mbTagCount].setAddress((uint16_t)tagAddress);
 			mbReadTags[mbTagCount].setSlaveId(slaveId);
 		} else {
 			log(LOG_WARNING, "Error in config file, tag address missing");
@@ -969,7 +1036,7 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 				mbReadTags[mbTagCount].setNoreadIgnore(intValue);
 		}
 		mbTagCount++;
-		//cout << "Tag " << mbTagCount << " addr: " << tagAddress << " cycle: " << tagUpdateCycle << " Topic: " << tagTopic << endl;
+		//cout << "Tag " << mbTagCount << " addr: " << tagAddress << " cycle: " << tagUpdateCycle << endl;
 	}
 	return true;
 }
@@ -978,7 +1045,7 @@ bool modbus_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
  * read slave configuration from config file
  */
 
-bool modbus_config_slaves(Setting& mbSlavesSettings) {
+bool mb_config_slaves(Setting& mbSlavesSettings) {
 	int slaveId, numTags;
 	string slaveName;
 	bool slaveEnabled;
@@ -1025,7 +1092,7 @@ bool modbus_config_slaves(Setting& mbSlavesSettings) {
 			}
 			if (slaveEnabled) {
 				Setting& mbTagsSettings = mbSlavesSettings[slavesIdx].lookup("tags");
-				if (!modbus_config_tags(mbTagsSettings, slaveId)) {
+				if (!mb_config_tags(mbTagsSettings, slaveId)) {
 					return false; }
 			} else {
 				log(LOG_NOTICE, "Slave %d (%s) disabled in config", slaveId, slaveName.c_str());
@@ -1044,7 +1111,7 @@ bool modbus_config_slaves(Setting& mbSlavesSettings) {
 /**
  * read update cycles from config file
  */
-bool modbus_config_updatecycles(Setting& updateCyclesSettings) {
+bool mb_config_updatecycles(Setting& updateCyclesSettings) {
 	int idValue, interval, index;
 	int numUpdateCycles = updateCyclesSettings.getLength();
 	if (numUpdateCycles < 1) {
@@ -1082,11 +1149,11 @@ bool modbus_config_updatecycles(Setting& updateCyclesSettings) {
  * read modbus configuration from config file
  */
 
-bool modbus_config() {
+bool mb_config() {
 	// Configure update cycles
 	try {
 		Setting& updateCyclesSettings = cfg.lookup("updatecycles");
-		if (!modbus_config_updatecycles(updateCyclesSettings)) {
+		if (!mb_config_updatecycles(updateCyclesSettings)) {
 			return false; }
 	} catch (const SettingNotFoundException &excp) {
 		log(LOG_ERR, "Error in config file <%s> not found", excp.getPath());
@@ -1099,7 +1166,7 @@ bool modbus_config() {
 	// Configure modbus slaves
 	try {
 		Setting& mbSlavesSettings = cfg.lookup("mbslaves");
-		if (!modbus_config_slaves(mbSlavesSettings)) {
+		if (!mb_config_slaves(mbSlavesSettings)) {
 			return false; }
 	} catch (const SettingNotFoundException &excp) {
 		log(LOG_ERR, "Error in config file <%s> not found", excp.getPath());
@@ -1111,7 +1178,7 @@ bool modbus_config() {
 		log(LOG_ERR, "Error in config file - Parse Exception");
 		return false;
 	} catch (...) {
-		log(LOG_ERR, "modbus_config <mbslaves> Error in config file (exception)");
+		log(LOG_ERR, "mb_config <mbslaves> Error in config file (exception)");
 		return false;
 	}
 	return true;
@@ -1209,8 +1276,8 @@ bool init_modbus()
 	
 	log(LOG_INFO, "Modbus RTU opened on port %s at %d baud", rtu_port.c_str(), port_baud);
 	
-	if (!modbus_config()) return false;
-	if (!modbus_assign_updatecycles()) return false;
+	if (!mb_config()) return false;
+	if (!mb_assign_updatecycles()) return false;
 	
 	// all slaves start life in offline mode
 	for (int i=0; i <= MODBUS_SLAVE_MAX; i++)
@@ -1250,7 +1317,7 @@ void exit_loop(void)
 	for (int i=0; i <= MODBUS_SLAVE_MAX; i++) {
 		// only if they are online, no change if they are already offline
 		if (mbSlaveOnline[i]) {
-			modbus_slave_set_online_status(i, false);
+			mb_slave_set_online_status(i, false);
 		}
 	}
 	

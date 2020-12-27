@@ -53,7 +53,7 @@ public:
 	* Set the address
 	* @param address: the new address
 	*/
-	void setAddress(int newAddress);
+	void setAddress(uint16_t newAddress);
 
 	/**
 	* Get the tag address string
