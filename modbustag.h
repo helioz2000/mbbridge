@@ -56,10 +56,28 @@ public:
 	void setAddress(uint16_t newAddress);
 
 	/**
-	* Get the tag address string
+	* Get full register address (e.g. 40100)
 	* @return the tag address
 	*/
-	uint16_t getAddress(void);
+	uint16_t getRegisterAddress(void);
+
+	/**
+	* Get modbus address (e.g. 100 for register 40100)
+	* @return the tag address
+	*/
+	uint16_t getModbusAddress(void);
+
+	/**
+	 * Get the modbus register type
+	 * @returns: -1=invalid, 0=Coil, 1=Discrete Input, 3=Input Register, 4=Holding Register
+	 */
+	int getRegisterType (void);
+
+	/**
+	 * Get the modbus register size
+	 * @returns: TRUE=single bit FALSE =16 bit
+	 */
+	bool isSingleBit (void);
 
 	/**
 	* Set the modbus slave id

@@ -98,8 +98,36 @@ void ModbusTag::setAddress(uint16_t newAddress) {
 	_address = newAddress;
 }
 
-uint16_t ModbusTag::getAddress(void) {
+uint16_t ModbusTag::getRegisterAddress(void) {
 	return _address;
+}
+
+uint16_t ModbusTag::getModbusAddress(void) {
+	int addrtype = this->getRegisterType();
+	switch (addrtype) {
+		case 0: return _address;
+			break;
+		case 1: return _address - 10000;
+			break;
+		case 3: return _address - 30000;
+			break;
+		case 4: return _address - 40000;
+			break;
+	}
+	return _address;
+}
+
+int ModbusTag::getRegisterType (void) {
+	if ((_address >= 0) && (_address <= 9999)) return 0;		// Coil
+	if ((_address >= 10000) && (_address <= 19999)) return 1;	// DI
+	if ((_address >= 30000) && (_address <= 39999)) return 3;	// Input Reg
+	if ((_address >= 40000) && (_address <= 49999)) return 4;	// Holding Reg
+	return -1;
+}
+
+bool ModbusTag::isSingleBit (void) {
+	if (_address <= 19999) return true;
+	return false;
 }
 
 void ModbusTag::setTopic(const char *topicStr) {

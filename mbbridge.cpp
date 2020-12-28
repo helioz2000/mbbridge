@@ -89,7 +89,7 @@ void mqtt_topic_update(const struct mosquitto_message *message);
 void mqtt_subscribe_tags(void);
 void setMainLoopInterval(int newValue);
 bool mb_read_tag(ModbusTag *tag);
-bool mb_read_registers(int slaveId, modbus_t *ctx, uint16_t addr, int nb, uint16_t *dest);
+bool mb_read_registers(int slaveId, modbus_t *ctx, uint16_t addr, int nb, int regtype, uint16_t *dest);
 bool mb_write_tag(ModbusTag *tag);
 void mb_write_request(int callbackId, Tag *tag);
 bool mqtt_publish_tag(ModbusTag *tag);
@@ -295,7 +295,7 @@ bool mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	ModbusTag *tp;
 	uint16_t *mbReadRegisters;
 	int slaveId, addr, addrRange, addrLo=99999, addrHi=0, addrCount = 0, group = t->getGroup();
-	int i, r, tagArraySize;
+	int i, r, tagArraySize, regType;
 	bool noread = false;
 	// if tag is not part of a group then return false
 	if (group < 1) return false;
@@ -306,7 +306,8 @@ bool mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 		if (!t->isNoread())
 			mqtt_publish_tag(t);
 		return true;
-		}
+	}
+	regType = t->getRegisterType();
 	// the tag is part of a group which has not been read in this cycle
 	slaveId = t->getSlaveId();
 	// assemble tag indexes which belong to same group and slave into one array
@@ -321,7 +322,7 @@ bool mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 		if (tag.getGroup() != group) continue;
 		// Tag belongs to the same slave and group
 		// determine highest / lowest address to read
-		addr = tag.getAddress();
+		addr = tag.getRegisterAddress();
 		//printf("[%d] ", addr);
 		if (addr < addrLo) addrLo = addr;
 		if (addr > addrHi) addrHi = addr; 
@@ -341,7 +342,7 @@ bool mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	mbReadRegisters = new uint16_t[addrRange];
 	
 	// read all tags in this group (multi read)
-	if (!mb_read_registers(slaveId, mb_ctx, addrLo, addrRange, mbReadRegisters)) {
+	if (!mb_read_registers(slaveId, mb_ctx, addrLo, addrRange, regType, mbReadRegisters)) {
 		//printf("%s: mb_read_registers failed\n", __func__);
 		noread = true;	// mark this as a failed read
 	} else {
@@ -356,7 +357,7 @@ bool mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 		for (i=0; i<tagArraySize; i++) {
 			tp = &mbReadTags[tagArray[i]];	// need to use pointer so we can modify original
 			// find matching address in tagArray
-			if (addr == tp->getAddress()) {				// tag matches address
+			if (addr == tp->getRegisterAddress()) {				// tag matches address
 				if (noread) {
 					tp->noreadNotify();	// notify tag of noread event
 				} else {
@@ -709,19 +710,6 @@ void mqtt_clear_tags(bool publish_noread = true, bool clear_retain = true) {
 #pragma mark Modbus
 
 /**
- * Get the modbus object typr
- * @param address: modbus address of the object
- * @returns: -1=invalid, 0=Coil, 1=Discrete Input, 3=Input Register, 4=Holding Register
- */
-int mb_register_type (uint16_t address) {
-	if ((address >= 0) && (address <= 9999)) return 0;		// Coil
-	if ((address >= 10000) && (address <= 19999)) return 1;	// DI
-	if ((address >= 30000) && (address <= 39999)) return 3;	// Input Reg
-	if ((address >= 40000) && (address <= 49999)) return 4;	// Holding Reg
-	return -1;
-}
-
-/**
  * Set and report slave online status to mqtt broker
  * @param slaveId: slave id to be changed
  * @param newStatus: true for online, false for offline
@@ -773,22 +761,13 @@ bool mb_write_tag(ModbusTag *tag) {
 	
 	uint8_t slaveId = tag->getSlaveId();
 	if (modbusDebugLevel > 0)
-		printf ("%s - writing %d to Slave %d Addr %d\n", __func__, tag->getRawValue(),slaveId, tag->getAddress());
+		printf ("%s - writing %d to Slave %d Addr %d\n", __func__, tag->getRawValue(),slaveId, tag->getRegisterAddress());
 	modbus_set_slave(mb_ctx, slaveId);
-	addrtype = mb_register_type(tag->getAddress());
+	addrtype = tag->getRegisterType();
 	if (addrtype < 0) return false;		// invalid register address type
-	switch (addrtype) {
-		case 0: mbaddr = tag->getAddress();
-			break;
-		case 1: mbaddr = tag->getAddress() - 10000;
-			break;
-		case 3: mbaddr = tag->getAddress() - 30000;
-			break;
-		case 4: mbaddr = tag->getAddress() - 40000;
-			break;
-		default:
-			return false;
-	}
+	mbaddr = tag->getModbusAddress();
+	if (mbaddr < 0) return false;
+
 	if (tag->getDataType() == 'r') {
 		rc = modbus_write_register(mb_ctx, mbaddr, tag->getRawValue());	// Modbus FC 6
 	} else {
@@ -797,13 +776,13 @@ bool mb_write_tag(ModbusTag *tag) {
 	if (rc != 1) {
 		if (errno == 110) {		//timeout
 			if (!runningAsDaemon) {
-				printf("%s - failed: no response from slave %d addr %d (timeout)\n", __func__, slaveId, tag->getAddress()); 
+				printf("%s - failed: no response from slave %d addr %d (timeout)\n", __func__, slaveId, tag->getRegisterAddress()); 
 				}
 			mb_slave_set_online_status(slaveId, false);
 		} 
 		if (errno == 0x6b24250) {	// Illegal Data Address
 			if (!runningAsDaemon)
-				printf("%s - failed: illegal data address %d on slave %d\n", __func__, tag->getAddress(), slaveId);
+				printf("%s - failed: illegal data address %d on slave %d\n", __func__, tag->getRegisterAddress(), slaveId);
 		}
 		log(LOG_ERR, "Modbus Write failed (%x): %s", errno, modbus_strerror(errno));
 		return false;
@@ -824,45 +803,50 @@ bool mb_write_tag(ModbusTag *tag) {
  * @param ctx: modbus context
  * @param addr: register address
  * @param nb: number of registers to read
+ * @param regtype: register type (as returned by ModbusTag class)
  * @param dest: storage for read values
  */
-bool mb_read_registers(int slaveId, modbus_t *ctx, uint16_t addr, int nb, uint16_t *dest) {
-	bool retVal = false;
-	int i, regtype, rc;
+bool mb_read_registers(int slaveId, modbus_t *ctx, uint16_t addr, int nb, int regtype, uint16_t *dest) {
+	bool retVal = false, singleBit = false;
+	int i, rc;
 	uint16_t mbaddr;
+	uint8_t bitDest[nb+1];
 	int retrycount = 0;
 	if (modbusDebugLevel > 0)
 		printf ("%s - reading #%d HR %d qty %d\n", __func__, slaveId, addr, nb);
 	
 	modbus_set_slave(ctx, slaveId);
-	regtype = mb_register_type(addr);
+
 	if (regtype < 0) {
 		if (!runningAsDaemon)
 			printf("%s - Invalid address type (%d)\n", __func__, addr);
 		return retVal;
 		}
 retry:	
-	// select correct modbus function for register type and subtract register type offset
+	// select modbus function for register type and subtract register type offset
 	switch (regtype) {
 		case 0: mbaddr = addr;
-			rc = modbus_read_bits(ctx, mbaddr, nb, (uint8_t*)dest);	//Modbus FC 1
+			singleBit = true;
+			rc = modbus_read_bits(ctx, mbaddr, nb, &bitDest[0]);	//Modbus FC 1
 			break;
 		case 1: mbaddr = addr - 10000;
-			rc = modbus_read_input_bits(ctx, mbaddr, nb, (uint8_t*)dest);	//Modbus FC 2
+			singleBit = true;
+			rc = modbus_read_input_bits(ctx, mbaddr, nb, &bitDest[0]);	//Modbus FC 2
 			break;
 		case 3: mbaddr = addr - 30000;
-			rc = modbus_read_input_registers(ctx, mbaddr, nb, dest);	// Modbus FC_4
+			rc = modbus_read_input_registers(ctx, mbaddr, nb, (uint16_t*)dest);	// Modbus FC_4
 			break;
 		case 4: mbaddr = addr - 40000;
-			rc = modbus_read_registers(ctx, mbaddr, nb, dest);	// Modbus FC_3
+			rc = modbus_read_registers(ctx, mbaddr, nb, (uint16_t*)dest);	// Modbus FC_3
 			break;
 		default:
 			if (!runningAsDaemon)
 				printf("%s - Invalid address type %d \n", __func__, addr);
 			return retVal;
 	}
-
+	
 	if (rc != nb) {
+		// Handle error
 		log(LOG_ERR, "Modbus Read #%d (Addr %u) failed (%x): %s", slaveId, addr, errno, modbus_strerror(errno));
 		// retry count reached ?
 		if (retrycount < mbMaxRetries) {
@@ -891,6 +875,13 @@ retry:
 		// successful read
 		mb_slave_set_online_status(slaveId, true);
 		retVal = true;
+		
+		// move single bit values from temporary array to destination
+		if (singleBit) {
+			for (i=0; i<nb; i++) {
+				dest[i] = (uint16_t)bitDest[i];
+			}
+		}
 		if (modbusDebugLevel > 0) {
 			printf("%s - reading success, ", __func__);
 			for (i=0; i<nb; i++) {
@@ -912,7 +903,7 @@ bool mb_read_tag(ModbusTag *tag) {
 
 	uint8_t slaveId = tag->getSlaveId();
 		
-	retVal = mb_read_registers(slaveId, mb_ctx, tag->getAddress(), 1, registers);
+	retVal = mb_read_registers(slaveId, mb_ctx, tag->getRegisterAddress(), 1, tag->getRegisterType(),registers);
 	if (retVal) {
 		tag->setRawValue(registers[0]);
 	} else {
