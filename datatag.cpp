@@ -167,6 +167,9 @@ void Tag::setValue(int intValue) {
 bool Tag::setValue(const char* strValue) {
     float newValue;
     int result = 0;
+    
+    if (strValue == NULL) return false;	// guard against null
+    
     char firstChar = strValue[0];
     
     // check for numeric data

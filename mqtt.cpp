@@ -156,6 +156,9 @@ static void on_subscribe(struct mosquitto *mosq, void *obj, int mid, int qos_cou
      //printf("%s - Connected: %d\n", __func__, connected);
      if (_connected) mosquitto_disconnect(_mosq) ;
      //mosquitto_loop_stop(_mosq, false);
+     connectionStatusCallback = NULL;
+     topicUpdateCallback = NULL;
+
      mosquitto_loop_stop(_mosq, true); // Note: must be true or this will block
      if (_mosq != NULL) {
          mosquitto_destroy(_mosq);

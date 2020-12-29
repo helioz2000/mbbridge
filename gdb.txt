@@ -1,0 +1,6 @@
+To debug with GDB:
+
+gdb --args mbbridge -d -c/etc/mbbridge
+
+to get gdb to pass SIGINT onto program:
+handle SIGINT noprint nostop pass

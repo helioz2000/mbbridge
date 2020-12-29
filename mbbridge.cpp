@@ -66,6 +66,7 @@ time_t mqtt_connect_time = 0;		// time the connection was initiated
 time_t mqtt_next_connect_time = 0;	// time when next connect is scheduled
 bool mqtt_connection_in_progress = false;
 bool mqtt_retain_default = false;
+bool mqtt_connection_active = false;
 std::string processName;
 char *info_label_text;
 useconds_t mainloopinterval = 250;   // milli seconds
@@ -88,7 +89,7 @@ void mqtt_connection_status(bool status);
 void mqtt_topic_update(const struct mosquitto_message *message);
 void mqtt_subscribe_tags(void);
 void setMainLoopInterval(int newValue);
-bool mb_read_tag(ModbusTag *tag);
+int mb_read_tag(ModbusTag *tag);
 bool mb_read_registers(int slaveId, modbus_t *ctx, uint16_t addr, int nb, int regtype, uint16_t *dest);
 bool mb_write_tag(ModbusTag *tag);
 void mb_write_request(int callbackId, Tag *tag);
@@ -287,9 +288,9 @@ bool modbus_write_process() {
  * @param tagArray: an array tag indexes which are part 
  * @param arrayIndex: index into current tag array
  * @param refTime: time reference to identify already read tags
- * @returns true if group of tags have been read, false if tag is not in a group or a failure has occured
+ * @returns 0 if group of tags have been read from modbus device, -1 if tag is not in a group or a failure has occured, 1 if tag has been read as part of group read
  */
-bool mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
+int mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	ModbusTag *t = &mbReadTags[tagArray[arrayIndex]];
 	ModbusTag tag;
 	ModbusTag *tp;
@@ -298,14 +299,14 @@ bool mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	int i, r, tagArraySize, regType;
 	bool noread = false;
 	// if tag is not part of a group then return false
-	if (group < 1) return false;
+	if (group < 1) return -1;
 	// if tag has already been read in this cycle the reference time will match
 	if (t->getReferenceTime() == refTime) {
 		//tag value is up-to-date, we can to publish the tag
 		//printf("%s: already updated #%d [%d], publishing value %d\n", __func__, t.getSlaveId(), t.getAddress(), t.getRawValue());
 		if (!t->isNoread())
 			mqtt_publish_tag(t);
-		return true;
+		return 1;			// success but didn't read from modbus device
 	}
 	regType = t->getRegisterType();
 	// the tag is part of a group which has not been read in this cycle
@@ -335,7 +336,7 @@ bool mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	
 	// perform sanity check on address range
 	addrRange = addrHi - addrLo + 1;
-	if (addrRange > 125) return false;		// attempting to read too many registers
+	if (addrRange > 125) return -1;		// attempting to read too many registers
 	//printf("%s: tagArraySize=%d addrLo=%d addrHi=%d addrRange=%d\n",__func__, tagArraySize, addrLo, addrHi, addrRange);
 	
 	// Allocate memory for registers
@@ -376,8 +377,8 @@ bool mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	// publish only the one tag referenced in parameters
 	mqtt_publish_tag(t);
 	delete [] mbReadRegisters;
-	if (noread) return false;
-	return true;	// indicate that tag has been processed
+	if (noread) return -1;
+	return 0;	// indicate that group of tags has been read from modbus device
 }
 
 /**
@@ -389,7 +390,8 @@ bool mb_read_process() {
 	int tagIndex = 0;
 	int *tagArray;
 	bool retval = false;
-	bool readsuccess = false;
+	//int readsuccess = -1;
+	uint8_t lastSlaveId = 0;
 	time_t now = time(NULL);
 	time_t refTime;
 	while (updateCycles[index].ident >= 0) {
@@ -407,13 +409,17 @@ bool mb_read_process() {
 			// read each tag in the array
 			tagIndex = 0;
 			while (tagArray[tagIndex] >= 0) {
+				// apply interslave delay  whenever SlaveID changes
+				if (lastSlaveId != mbReadTags[tagArray[tagIndex]].getSlaveId()) {
+					if (lastSlaveId != 0) usleep(modbusinterslavedelay);	// skip delay on first execution
+					lastSlaveId = mbReadTags[tagArray[tagIndex]].getSlaveId();
+				}
 				if ((&mbReadTags[tagArray[tagIndex]])->getGroup() < 1) {		// if tag is not part of a group
-					readsuccess = mb_read_tag(&mbReadTags[tagArray[tagIndex]]);	// perform single tag read
+					mb_read_tag(&mbReadTags[tagArray[tagIndex]]);	// perform single tag read
 				} else {
-					readsuccess = mb_read_multi_tags(tagArray, tagIndex, refTime);	// multi tag read
+					mb_read_multi_tags(tagArray, tagIndex, refTime);	// multi tag read
 				}
 				tagIndex++;
-				if (readsuccess) usleep(modbusinterslavedelay);
 			}
 			retval = true;
 			//cout << now << " Update Cycle: " << updateCycles[index].ident << " - " << updateCycles[index].tagArraySize << " tags" << endl;
@@ -592,9 +598,11 @@ void mqtt_connection_status(bool status) {
 		log(LOG_INFO, "Connected to MQTT broker [%s]", mqtt.broker());
 		mqtt_next_connect_time = 0;
 		mqtt_connection_in_progress = false;
+		mqtt_connection_active = true;
 		mqtt.setRetain(mqtt_retain_default);
 		mqtt_subscribe_tags();
 	} else {
+		mqtt_connection_active = false;
 		if (mqtt_connection_in_progress) {
 			mqtt.disconnect();
 			// Note: the timeout is determined by OS network stack
@@ -687,6 +695,8 @@ void mqtt_clear_tags(bool publish_noread = true, bool clear_retain = true) {
 		tagIndex = 0;
 		while (tagArray[tagIndex] >= 0) {
 			mbTag = mbReadTags[tagArray[tagIndex]];
+			if (debugEnabled)
+				cout << "clearing: " << mbTag.getTopic() << endl;
 			if (publish_noread)
 				mqtt.publish(mbTag.getTopic(), mbTag.getFormat(), mbTag.getNoreadValue(), mbTag.getPublishRetain());
 				//mqtt_publish_tag(mbTag, true);			// publish noread value
@@ -895,9 +905,9 @@ retry:
 
 /**
  * Read single tag from modbus device
- * @returns: true if successful read
+ * @returns: 0 if successful, -1 if failed
  */
-bool mb_read_tag(ModbusTag *tag) {
+int mb_read_tag(ModbusTag *tag) {
 	uint16_t registers[4];
 	bool retVal;
 
@@ -910,7 +920,8 @@ bool mb_read_tag(ModbusTag *tag) {
 		tag->noreadNotify();
 	}
 	mqtt_publish_tag(tag);
-	return retVal;
+	if (retVal) return 0;
+	else return -1;
 }
 
 
@@ -980,7 +991,7 @@ bool mb_assign_updatecycles () {
 /**
  * read tag configuration for one slave from config file
  */
-bool mb_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
+bool mb_config_tags(Setting& mbTagsSettings, uint8_t slaveId, bool defaultRetain, int defaultNoreadAction) {
 	int tagIndex;
 	unsigned int tagAddress;
 	int tagUpdateCycle;
@@ -1013,6 +1024,8 @@ bool mb_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 			mbReadTags[mbTagCount].setTopic(strValue.c_str());
 			if (mbTagsSettings[tagIndex].lookupValue("retain", bValue))
 				mbReadTags[mbTagCount].setPublishRetain(bValue);
+			else
+				mbReadTags[mbTagCount].setPublishRetain(defaultRetain);
 			if (mbTagsSettings[tagIndex].lookupValue("format", strValue))
 				mbReadTags[mbTagCount].setFormat(strValue.c_str());
 			if (mbTagsSettings[tagIndex].lookupValue("multiplier", fValue))
@@ -1023,6 +1036,8 @@ bool mb_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
 				mbReadTags[mbTagCount].setNoreadValue(fValue);
 			if (mbTagsSettings[tagIndex].lookupValue("noreadaction", intValue))
 				mbReadTags[mbTagCount].setNoreadAction(intValue);
+			else
+				mbReadTags[mbTagCount].setNoreadAction(defaultNoreadAction);
 			if (mbTagsSettings[tagIndex].lookupValue("noreadignore", intValue))
 				mbReadTags[mbTagCount].setNoreadIgnore(intValue);
 		}
@@ -1037,9 +1052,9 @@ bool mb_config_tags(Setting& mbTagsSettings, uint8_t slaveId) {
  */
 
 bool mb_config_slaves(Setting& mbSlavesSettings) {
-	int slaveId, numTags;
+	int slaveId, numTags, defaultNoreadAction;
 	string slaveName;
-	bool slaveEnabled;
+	bool slaveEnabled, defaultRetain;
 	
 	// we need at least one slave in config file
 	int numSlaves = mbSlavesSettings.getLength();
@@ -1082,8 +1097,12 @@ bool mb_config_slaves(Setting& mbSlavesSettings) {
 				slaveEnabled = true;	// true is assumed if there is no entry in config file
 			}
 			if (slaveEnabled) {
+				if (!mbSlavesSettings[slavesIdx].lookupValue("default_retain", defaultRetain)) 
+					defaultRetain = false;
+				if (!mbSlavesSettings[slavesIdx].lookupValue("default_noreadaction", defaultNoreadAction)) 
+					defaultNoreadAction = -1;
 				Setting& mbTagsSettings = mbSlavesSettings[slavesIdx].lookup("tags");
-				if (!mb_config_tags(mbTagsSettings, slaveId)) {
+				if (!mb_config_tags(mbTagsSettings, slaveId, defaultRetain, defaultNoreadAction)) {
 					return false; }
 			} else {
 				log(LOG_NOTICE, "Slave %d (%s) disabled in config", slaveId, slaveName.c_str());
@@ -1303,9 +1322,10 @@ void setMainLoopInterval(int newValue)
 void exit_loop(void) 
 {
 	bool bValue, clearonexit = false, noreadonexit = false;
+	int i;
 	
 	// set all modbus slaves as offline and publish new status
-	for (int i=0; i <= MODBUS_SLAVE_MAX; i++) {
+	for (i=0; i <= MODBUS_SLAVE_MAX; i++) {
 		// only if they are online, no change if they are already offline
 		if (mbSlaveOnline[i]) {
 			mb_slave_set_online_status(i, false);
@@ -1317,7 +1337,7 @@ void exit_loop(void)
 		modbus_close(mb_ctx);
 		modbus_free(mb_ctx);
 		mb_ctx = NULL;
-		cout << "Modbus closed" << endl;
+		cout << "Modbus closed" << endl << flush;
 	}
 	
 	// how to handle mqtt broker published tags 
@@ -1327,19 +1347,41 @@ void exit_loop(void)
 	// publish noread value for all tags?
 	if (cfg.lookupValue("mqtt.noreadonexit", bValue)) 
 		noreadonexit = bValue;
-	if (noreadonexit || clearonexit)
+		
+	
+	if (noreadonexit || clearonexit) {
+		if (debugEnabled)
+			cout << "Clearing MQTT tags ..." << endl << flush;
 		mqtt_clear_tags(noreadonexit, clearonexit);
+		}
+		
+	// Close MQTT connection
+	mqtt.disconnect();
+	for (i=0; i < 50; i++) {	// wait up to 5s for MQTT disconnect
+		if (!mqtt_connection_active) break;
+		usleep(100000);
+	}
+	if ((debugEnabled) && (mqtt_connection_active))
+		cout << "MQTT disconnect failed (waited for 5s)" << endl << flush;
+		
 	// free allocated memory
 	// arrays of tags in cycleupdates
 	int *ar, idx=0;
+	if (debugEnabled)
+		cout << "Deleting tag arrays ..." << endl << flush;
 	while (updateCycles[idx].ident >= 0) {
 		ar = updateCycles[idx].tagArray;
 		if (ar != NULL) delete [] ar;		// delete array if one exists
 		idx++;
 	}
-	
+	if (debugEnabled)
+		cout << "Deleting updateCycles" << endl << flush;
 	delete [] updateCycles;
+	if (debugEnabled)
+		cout << "Deleting mbWriteTags" << endl << flush;
 	delete [] mbWriteTags;
+	if (debugEnabled)
+		cout << "Deleting mbReadTags" << endl << flush;
 	delete [] mbReadTags;
 }
 

@@ -53,6 +53,7 @@ ModbusTag::ModbusTag() {
 	this->_noreadaction = -1;	// do nothing
 	this->_noreadignore = 0;
 	this->_noreadcount = 0;
+	this->_publish_retain = false;
 	this->_writePending = false;
 	this->_ignoreRetained = false;
 	this->_dataType = 'r';
