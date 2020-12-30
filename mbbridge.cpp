@@ -1250,7 +1250,7 @@ bool init_modbus()
 	}
 	// set slave status reporting retain
 	if (cfg.lookupValue("modbusrtu.slavestatusretain", bValue)) {
-		mbSlaveStatusTopic = bValue;
+		mbSlaveStatusRetain = bValue;
 	}
 	
 	if (cfg_get_int("modbusrtu.maxretries", newValue)) {
