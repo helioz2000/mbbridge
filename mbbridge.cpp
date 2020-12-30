@@ -56,6 +56,7 @@ static string cpu_temp_topic = "";
 static string cfgFileName;
 static string execName;
 static string mbSlaveStatusTopic;
+bool mbSlaveStatusRetain = false;
 bool exitSignal = false;
 bool debugEnabled = false;
 int modbusDebugLevel = 0;
@@ -737,9 +738,9 @@ void mb_slave_set_online_status (int slaveId, bool newStatus, bool forceReport =
 			topic = topic.append(std::to_string(slaveId));
 			//printf("%s - topic= %s value=%d\n", __func__, topic.c_str(), mbSlaveOnline[slaveId]);
 			if (mbSlaveOnline[slaveId]) {
-				mqtt.publish(topic.c_str(), "%.0f", 1, false);
+				mqtt.publish(topic.c_str(), "%.0f", 1, mbSlaveStatusRetain);
 			} else {
-				mqtt.publish(topic.c_str(), "%.0f", 0, false);
+				mqtt.publish(topic.c_str(), "%.0f", 0, mbSlaveStatusRetain);
 			}
 		}
 	}
@@ -1203,6 +1204,7 @@ bool init_modbus()
 	//char str[256];
 	string rtu_port;
 	string strValue;
+	bool bValue;
 	int port_baud = 9600;
 	uint32_t response_to_sec = 0;
 	uint32_t response_to_usec = 0;
@@ -1245,6 +1247,10 @@ bool init_modbus()
 	if (cfg.lookupValue("modbusrtu.slavestatustopic", strValue)) {
 		mbSlaveStatusTopic = strValue;
 		//printf("%s - mbSlaveStatusTopic: %s\n", __func__, mbSlaveStatusTopic.c_str());
+	}
+	// set slave status reporting retain
+	if (cfg.lookupValue("modbusrtu.slavestatusretain", bValue)) {
+		mbSlaveStatusTopic = bValue;
 	}
 	
 	if (cfg_get_int("modbusrtu.maxretries", newValue)) {
