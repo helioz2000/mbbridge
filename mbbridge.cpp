@@ -40,7 +40,7 @@ using namespace libconfig;
 
 const char *build_date_str = __DATE__ " " __TIME__;
 const int version_major = 1;
-const int version_minor = 02;
+const int version_minor = 03;
 
 #define CFG_FILENAME_EXT ".cfg"
 #define CFG_DEFAULT_FILEPATH "/etc/"
@@ -795,7 +795,7 @@ bool mb_write_tag(ModbusTag *tag) {
 			if (!runningAsDaemon)
 				printf("%s - failed: illegal data address %d on slave %d\n", __func__, tag->getRegisterAddress(), slaveId);
 		}
-		log(LOG_ERR, "Modbus Write failed (%x): %s", errno, modbus_strerror(errno));
+		log(LOG_ERR, "Modbus Write #%d (Addr %d)failed (%x): %s", slaveId, tag->getRegisterAddress(), errno, modbus_strerror(errno));
 		return false;
 	} else {
 		// successful read
