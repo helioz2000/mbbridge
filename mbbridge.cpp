@@ -75,11 +75,11 @@ useconds_t mainloopinterval = 250;   // milli seconds
 //extern void roomTempUpdate(int x, Tag* t);
 modbus_t *mb_ctx = NULL;
 updatecycle *updateCycles = NULL;	// array of update cycle definitions
-ModbusTag *mbReadTags = NULL;			// array of all modbus read tags
-ModbusTag *mbWriteTags = NULL;			// array of all modbus write tags
+ModbusTag *mbReadTags = NULL;		// array of all modbus read tags
+ModbusTag *mbWriteTags = NULL;		// array of all modbus write tags
 int mbTagCount = -1;
 uint32_t modbusinterslavedelay = 0;	// delay between modbus transactions
-int mbMaxRetries = 0;					// number of retries on modbus error (config file)
+int mbMaxRetries = 0;				// number of retries on modbus error (config file)
 #define MODBUS_SLAVE_MAX 254		// highest permitted slave ID
 #define MODBUS_SLAVE_MIN 1			// lowest permitted slave ID
 bool mbSlaveOnline[MODBUS_SLAVE_MAX+1];			// array to store online/offline status
@@ -795,7 +795,7 @@ bool mb_write_tag(ModbusTag *tag) {
 			if (!runningAsDaemon)
 				printf("%s - failed: illegal data address %d on slave %d\n", __func__, tag->getRegisterAddress(), slaveId);
 		}
-		log(LOG_ERR, "Modbus Write #%d (Addr %d)failed (%x): %s", slaveId, tag->getRegisterAddress(), errno, modbus_strerror(errno));
+		log(LOG_ERR, "Modbus Write #%d (Addr %d) failed (%x): %s", slaveId, tag->getRegisterAddress(), errno, modbus_strerror(errno));
 		return false;
 	} else {
 		// successful read
