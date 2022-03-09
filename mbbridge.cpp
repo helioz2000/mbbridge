@@ -278,7 +278,7 @@ bool modbus_write_process() {
 	// so this while loop will run through to the last item in mbWriteTags[]
 	while ((slaveId >= MODBUS_SLAVE_MIN) && (slaveId <= MODBUS_SLAVE_MAX)) {
 		if (mbWriteTags[idx].getWritePending()) {
-			//printf ("%s - writing %d to Slave %d Addr %d idx %d\n", __func__, mbWriteTags[idx].getRawValue(),slaveId, mbWriteTags[idx].getAddress(), idx);
+			//printf ("%s - writing %d to Slave %d Addr %d idx %d\n", __func__, mbWriteTags[idx].getRawValue(),slaveId, mbWriteTags[idx].getRegisterAddress(), idx);
         	// detect change in Slave ID
         	if (slaveId != prevSlaveId) {
             	// execute inter slave delay
@@ -291,10 +291,20 @@ bool modbus_write_process() {
 				mbWriteTags[idx].setWritePending(false);	// mark as write done
 				// clear write attempts
 				mbWriteTags[idx].clearWriteFailedCount();
+				// register slave as "online"
+				mbSlaveOnline[slaveId] = true;
 				return true;			// end here, we only do one write
 			} else {	// write has failed
 				// increment write attempt counter
 				mbWriteTags[idx].incWriteFailedCount();
+				// log failed write but only if the  slave is online
+		        if ( (modbusDebugLevel > 0) && (mbSlaveOnline[slaveId]) ) {
+					if ( !runningAsDaemon ) {
+						printf("%s - write attempt#%d failed [Slave %d Addr %d]\n", __func__, mbWriteTags[idx].getWriteFailedCount(), slaveId, mbWriteTags[idx].getRegisterAddress());
+					} else {
+						log(LOG_WARNING, "Modbus write attempt#%d failed [Slave %d Addr %d]", mbWriteTags[idx].getWriteFailedCount(), slaveId, mbWriteTags[idx].getRegisterAddress());
+					}
+				}
 				// check for max write attempts
 				if (mbWriteTags[idx].getWriteFailedCount() >= modbusWriteMaxAttempts) {
 					// abandon write attempts
