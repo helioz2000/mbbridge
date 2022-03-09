@@ -55,6 +55,7 @@ ModbusTag::ModbusTag() {
 	this->_noreadcount = 0;
 	this->_publish_retain = false;
 	this->_writePending = false;
+	this->_writefailedcount = 0;
 	this->_ignoreRetained = false;
 	this->_dataType = 'r';
 	this->_referenceTime = 0;
@@ -290,4 +291,16 @@ void ModbusTag::setWritePending(bool newValue) {
 	
 bool ModbusTag::getWritePending(void) {
 	return _writePending;
+}
+
+int ModbusTag::getWriteFailedCount(void) {
+	return _writefailedcount;
+}
+
+void ModbusTag::incWriteFailedCount(void) {
+	_writefailedcount++;
+}
+
+void ModbusTag::clearWriteFailedCount(void) {
+	_writefailedcount =  0;
 }

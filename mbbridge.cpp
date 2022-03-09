@@ -40,7 +40,7 @@ using namespace libconfig;
 
 const char *build_date_str = __DATE__ " " __TIME__;
 const int version_major = 1;
-const int version_minor = 03;
+const int version_minor = 10;
 
 #define CFG_FILENAME_EXT ".cfg"
 #define CFG_DEFAULT_FILEPATH "/etc/"
@@ -61,6 +61,7 @@ bool exitSignal = false;
 bool debugEnabled = false;
 int modbusDebugLevel = 0;
 bool modbusAddressBase = 0;		// should be 1 for 1-based register addressing
+int modbusWriteMaxAttempts = 3;
 bool mqttDebugEnabled = false;
 bool runningAsDaemon = false;
 time_t mqtt_connect_time = 0;		// time the connection was initiated
@@ -83,6 +84,7 @@ int mbMaxRetries = 0;				// number of retries on modbus error (config file)
 #define MODBUS_SLAVE_MAX 254		// highest permitted slave ID
 #define MODBUS_SLAVE_MIN 1			// lowest permitted slave ID
 bool mbSlaveOnline[MODBUS_SLAVE_MAX+1];			// array to store online/offline status
+
 
 #pragma mark Proto types
 void subscribe_tags(void);
@@ -262,19 +264,47 @@ bool var_process(void) {
 
 /**
  * process modbus write
- * only one write function is processed per call
+ * only one successful write function is processed per call
+ * if write failed it is attempted again on next call
+ * until max write attempts have been exceeded
  * @return false if there was nothing to process, otherwise true
  */
 bool modbus_write_process() {
 	int idx = 0;
+	bool success = FALSE;
 	uint8_t slaveId = mbWriteTags[idx].getSlaveId();
+	uint8_t prevSlaveId = slaveId;	// to detect change in slave ID
+	// The last entry in the mbWriteTags has a SlaveID of MODBUS_SLAVE_MAX+1
+	// so this while loop will run through to the last item in mbWriteTags[]
 	while ((slaveId >= MODBUS_SLAVE_MIN) && (slaveId <= MODBUS_SLAVE_MAX)) {
 		if (mbWriteTags[idx].getWritePending()) {
 			//printf ("%s - writing %d to Slave %d Addr %d idx %d\n", __func__, mbWriteTags[idx].getRawValue(),slaveId, mbWriteTags[idx].getAddress(), idx);
-			mb_write_tag(&mbWriteTags[idx]);
-			mbWriteTags[idx].setWritePending(false);	// mark as write done
-			return true;			// end here, we only do one write
+        	// detect change in Slave ID
+        	if (slaveId != prevSlaveId) {
+            	// execute inter slave delay
+            	usleep(modbusinterslavedelay);
+            	prevSlaveId = slaveId;
+        	}
+			success = mb_write_tag(&mbWriteTags[idx]);
+			if (success) {
+				// upon successful write
+				mbWriteTags[idx].setWritePending(false);	// mark as write done
+				// clear write attempts
+				mbWriteTags[idx].clearWriteFailedCount();
+				return true;			// end here, we only do one write
+			} else {	// write has failed
+				// increment write attempt counter
+				mbWriteTags[idx].incWriteFailedCount();
+				// check for max write attempts
+				if (mbWriteTags[idx].getWriteFailedCount() >= modbusWriteMaxAttempts) {
+					// abandon write attempts
+					mbWriteTags[idx].setWritePending(false);
+					// clear failed counter
+					mbWriteTags[idx].clearWriteFailedCount();
+				}
 			}
+		}
+		// index to next write tag
 		idx++;
 		slaveId = mbWriteTags[idx].getSlaveId();
 	}

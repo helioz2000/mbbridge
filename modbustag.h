@@ -273,6 +273,21 @@ public:
 	 * Get write pending
 	 */
 	bool getWritePending(void);
+
+	/**
+	 * get wite failed counter
+	 */
+	int getWriteFailedCount(void);
+
+	/**
+	 * increment write failed counter
+	 */
+	void incWriteFailedCount(void);
+
+	/**
+	 * clear write failed counter
+	 */
+	void clearWriteFailedCount(void);
 	
 	// public members used to store data which is not used inside this class
 	//int readInterval;                   // seconds between reads
@@ -288,6 +303,7 @@ private:
 	bool _publish_retain;           // publish with or without retain
 	bool _write;					// true for write tag, false for read tag
 	bool _writePending;				// value needs to be written to slave
+	int	_writefailedcount;			// number of failed writes
 	bool _ignoreRetained;			// do not write retained value to slave
 	float _multiplier;				// multiplier for scaled value
 	float _offset;					// offset for scaled value
