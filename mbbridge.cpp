@@ -40,7 +40,7 @@ using namespace libconfig;
 
 const char *build_date_str = __DATE__ " " __TIME__;
 const int version_major = 1;
-const int version_minor = 10;
+const int version_minor = 11;
 
 #define CFG_FILENAME_EXT ".cfg"
 #define CFG_DEFAULT_FILEPATH "/etc/"
@@ -354,7 +354,7 @@ int mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 	slaveId = t->getSlaveId();
 	// assemble tag indexes which belong to same group and slave into one array
 	i = 0;
-	//printf("%s: reading [%d]=%d tagArray: ", __func__, t.getAddress(), t.getRawValue());
+	//printf("%s: reading [%d]=%d tagArray: ", __func__, t->getAddress(), t->getRawValue());
 	while (tagArray[i] >= 0) {
 		tag = mbReadTags[tagArray[i]];
 		i++;
@@ -398,12 +398,14 @@ int mb_read_multi_tags(int *tagArray, int arrayIndex, time_t refTime) {
 		// iterate through tag array
 		for (i=0; i<tagArraySize; i++) {
 			tp = &mbReadTags[tagArray[i]];	// need to use pointer so we can modify original
-			// find matching address in tagArray
-			if (addr == tp->getRegisterAddress()) {				// tag matches address
+			// find matching register address and slaveId in tagArray
+			if ( (addr == tp->getRegisterAddress()) && (slaveId == tp->getSlaveId()) ) {				// tag matches address
+				//printf("%s: #%d %d\n", __func__, tp->getSlaveId(), tp->getModbusAddress());
 				if (noread) {
 					tp->noreadNotify();	// notify tag of noread event
 				} else {
 					tp->setRawValue(mbReadRegisters[r]);	// update tag with register value
+					//printf("%s: updating #%s %d\n", __func__, tp->getTopic(), tp->getRawValue());
 					//printf("%s: updating #%d [%d]=%d\n", __func__, slaveId, addr, mbReadRegisters[r]);
 				}
 				tp->setReferenceTime(refTime);			// update tag reference time
