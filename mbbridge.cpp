@@ -79,6 +79,7 @@ updatecycle *updateCycles = NULL;	// array of update cycle definitions
 ModbusTag *mbReadTags = NULL;		// array of all modbus read tags
 ModbusTag *mbWriteTags = NULL;		// array of all modbus write tags
 int mbTagCount = -1;
+int pendingWrites = 0;				// number of pending writes
 uint32_t modbusinterslavedelay = 0;	// delay between modbus transactions
 int mbMaxRetries = 0;				// number of retries on modbus error (config file)
 #define MODBUS_SLAVE_MAX 254		// highest permitted slave ID
@@ -289,6 +290,7 @@ bool modbus_write_process() {
 			if (success) {
 				// upon successful write
 				mbWriteTags[idx].setWritePending(false);	// mark as write done
+				pendingWrites--;
 				// clear write attempts
 				mbWriteTags[idx].clearWriteFailedCount();
 				// register slave as "online"
@@ -309,6 +311,7 @@ bool modbus_write_process() {
 				if (mbWriteTags[idx].getWriteFailedCount() >= modbusWriteMaxAttempts) {
 					// abandon write attempts
 					mbWriteTags[idx].setWritePending(false);
+					pendingWrites--;
 					// clear failed counter
 					mbWriteTags[idx].clearWriteFailedCount();
 				}
@@ -463,6 +466,7 @@ bool mb_read_process() {
 					mb_read_multi_tags(tagArray, tagIndex, refTime);	// multi tag read
 				}
 				tagIndex++;
+				if (pendingWrites > 0) return true;			// abort reading if writes are pending
 			}
 			retval = true;
 			//cout << now << " Update Cycle: " << updateCycles[index].ident << " - " << updateCycles[index].tagArraySize << " tags" << endl;
@@ -801,7 +805,8 @@ void mb_write_request(int callbackId, Tag *tag) {
 	// update value in tag array
 	mbWriteTags[callbackId].setRawValue(tag->intValue());
 	// set write request on tag
-	mbWriteTags[callbackId].setWritePending(true);			
+	mbWriteTags[callbackId].setWritePending(true);
+	pendingWrites++;		// track number of pending writes
 	//printf("%s - %s is %d (%d)\n", __func__, tag->getTopic(), mbWriteTags[callbackId].getRawValue(),tag->intValue());
 }
 
